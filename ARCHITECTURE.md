@@ -266,27 +266,44 @@ Hooks reserved for future Prometheus support.
 
 ### 10.1 Unit tests
 
-* Store implementations
+Rust tests via `cargo test --workspace`:
+
+* Store implementations (`crates/awrust-s3-domain/tests/`)
 * Error mapping
 * XML response snapshots
 * Deterministic ordering
 
 ### 10.2 Integration tests
 
-Run SDK-level tests:
+BDD tests via [Behave](https://behave.readthedocs.io/) + [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html):
 
-* create bucket
-* put object
-* get object
-* head object
-* list objects
-* delete object
-* delete bucket
+```
+tests/integration/
+  features/         Gherkin feature files
+    bucket.feature  Bucket CRUD scenarios
+    object.feature  Object CRUD scenarios
+  steps/            Python step implementations (boto3)
+  environment.py    Server lifecycle (build, start, teardown)
+```
 
-Must work with:
+Run: `cd tests/integration && behave`
 
-* AWS CLI (`--endpoint-url`)
-* At least one official AWS SDK
+The suite automatically starts the server on a random port and tears down after.
+
+Scenarios cover:
+
+* create / delete / idempotent create bucket
+* delete non-empty bucket (error)
+* put / get / delete object
+* list objects with prefix filtering
+* get non-existent object (error)
+
+### 10.3 CI
+
+GitHub Actions (`.github/workflows/ci.yml`):
+
+* **build** job: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, release build
+* **integration** job: Python 3.11, `behave` + `boto3` against the server
 
 ---
 
