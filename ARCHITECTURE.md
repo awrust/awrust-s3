@@ -1,6 +1,6 @@
 # awrust-s3 — Architecture (v0)
 
-**Status:** Draft (v0)
+**Status:** v0 complete
 **Project:** awrust-s3
 **License:** MIT
 **Primary distribution:** Docker image (Linux amd64/arm64)
@@ -303,7 +303,8 @@ Scenarios cover:
 GitHub Actions (`.github/workflows/ci.yml`):
 
 * **build** job: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, release build
-* **integration** job: Python 3.11, `behave` + `boto3` against the server
+* **integration** job: `behave` + `boto3` against both memory and fs backends
+* **docker** job: build Docker image, run BDD suite against it (memory + fs)
 
 ---
 
@@ -313,16 +314,20 @@ GitHub Actions (`.github/workflows/ci.yml`):
 awrust-s3/
   README.md
   ARCHITECTURE.md
-  COMPAT.md
   LICENSE
   Cargo.toml
   crates/
-    awrust-s3-core/
-    awrust-s3-server/
+    awrust-s3-domain/    # Store trait, MemoryStore, FsStore
+    awrust-s3-server/    # Axum HTTP server, handlers, XML
   docker/
     Dockerfile
   tests/
     integration/
+      features/          # Gherkin BDD scenarios
+      steps/             # Python step implementations (boto3)
+      environment.py     # Server lifecycle (cargo or Docker)
+  docs/
+    adr/                 # Architecture Decision Records
 ```
 
 ---
@@ -340,12 +345,12 @@ awrust-s3/
 
 ---
 
-## 13. Open questions
+## 13. Resolved questions
 
-* Include ListAllMyBuckets in v0?
-* Idempotent bucket creation vs strict AWS error?
-* Filesystem store in v0 or v0.2?
-* Basic range requests in early versions?
+* Include ListAllMyBuckets in v0? **Yes** — `GET /` returns `ListAllMyBucketsResult`.
+* Idempotent bucket creation vs strict AWS error? **Idempotent** — `create_bucket` is a no-op if bucket exists.
+* Filesystem store in v0 or v0.2? **v0** — `FsStore` implemented, selectable via `AWRUST_S3_STORE=fs`.
+* Basic range requests in early versions? **Deferred** to v0.x.
 
 ---
 
