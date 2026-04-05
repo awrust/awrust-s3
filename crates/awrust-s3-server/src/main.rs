@@ -1,8 +1,15 @@
-use axum::{Json, Router, routing::get};
+mod error;
+mod handlers;
+mod xml;
+
+use awrust_s3_domain::{MemoryStore, Store};
+use axum::routing::{get, put};
+use axum::{Json, Router};
 use serde::Serialize;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Serialize)]
@@ -14,14 +21,36 @@ struct HealthResponse {
 async fn main() {
     init_tracing();
 
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+
     let app = Router::new()
         .route("/health", get(health))
-        .layer(TraceLayer::new_for_http()
-            .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-            .on_response(DefaultOnResponse::new().level(Level::INFO)));
+        .route(
+            "/:bucket",
+            put(handlers::create_bucket)
+                .head(handlers::head_bucket)
+                .delete(handlers::delete_bucket)
+                .get(handlers::list_objects),
+        )
+        .route(
+            "/:bucket/*key",
+            put(handlers::put_object)
+                .get(handlers::get_object)
+                .head(handlers::head_object)
+                .delete(handlers::delete_object),
+        )
+        .with_state(store)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
-    let addr: SocketAddr = "0.0.0.0:4566".parse().expect("valid listen addr");
-    info!(service="s3", %addr, "awrust-s3 server starting");
+    let addr: SocketAddr = std::env::var("AWRUST_S3_LISTEN_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:4566".to_string())
+        .parse()
+        .expect("valid listen addr");
+    info!(service = "s3", %addr, "awrust-s3 server starting");
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
