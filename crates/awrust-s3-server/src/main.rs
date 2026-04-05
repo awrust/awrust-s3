@@ -46,7 +46,10 @@ async fn main() {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    let addr: SocketAddr = "0.0.0.0:4566".parse().expect("valid listen addr");
+    let addr: SocketAddr = std::env::var("AWRUST_S3_LISTEN_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:4566".to_string())
+        .parse()
+        .expect("valid listen addr");
     info!(service = "s3", %addr, "awrust-s3 server starting");
 
     let listener = tokio::net::TcpListener::bind(addr)
