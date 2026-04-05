@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
-use crate::xml::{BucketEntry, ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse};
+use crate::xml::{
+    BucketEntry, BucketList, ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
+};
 
 type S3Result<T> = Result<T, S3Error>;
 
@@ -43,7 +45,9 @@ pub async fn delete_bucket(
 pub async fn list_buckets(State(store): State<Arc<dyn Store>>) -> Response {
     let names = store.list_buckets();
     let result = ListAllMyBucketsResult {
-        buckets: names.into_iter().map(|name| BucketEntry { name }).collect(),
+        buckets: BucketList {
+            entries: names.into_iter().map(|name| BucketEntry { name }).collect(),
+        },
     };
     XmlResponse(result).into_response()
 }
