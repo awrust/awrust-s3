@@ -59,11 +59,17 @@ pub struct GetObject {
     pub meta: ObjectMeta,
 }
 
+#[derive(Debug, Clone)]
+pub struct BucketSummary {
+    pub name: String,
+    pub created: u64,
+}
+
 pub trait Store: Send + Sync {
     fn create_bucket(&self, name: &str) -> Result<()>;
     fn bucket_exists(&self, name: &str) -> bool;
     fn delete_bucket(&self, name: &str) -> Result<()>;
-    fn list_buckets(&self) -> Vec<String>;
+    fn list_buckets(&self) -> Vec<BucketSummary>;
 
     fn put_object(&self, bucket: &str, key: &str, input: PutObject) -> Result<()>;
     fn get_object(&self, bucket: &str, key: &str) -> Result<GetObject>;
@@ -78,9 +84,19 @@ pub struct MemoryStore {
     buckets: RwLock<HashMap<String, BucketState>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct BucketState {
+    created: u64,
     objects: HashMap<String, ObjectRecord>,
+}
+
+impl Default for BucketState {
+    fn default() -> Self {
+        Self {
+            created: now_secs(),
+            objects: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -131,11 +147,17 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    fn list_buckets(&self) -> Vec<String> {
+    fn list_buckets(&self) -> Vec<BucketSummary> {
         let buckets = self.buckets.read().expect("lock poisoned");
-        let mut names: Vec<String> = buckets.keys().cloned().collect();
-        names.sort();
-        names
+        let mut summaries: Vec<BucketSummary> = buckets
+            .iter()
+            .map(|(name, state)| BucketSummary {
+                name: name.clone(),
+                created: state.created,
+            })
+            .collect();
+        summaries.sort_by(|a, b| a.name.cmp(&b.name));
+        summaries
     }
 
     fn put_object(&self, bucket: &str, key: &str, input: PutObject) -> Result<()> {

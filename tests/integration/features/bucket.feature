@@ -26,3 +26,8 @@ Feature: Bucket operations
     When I list all buckets
     Then the bucket list should contain "alpha-bucket"
     And the bucket list should contain "beta-bucket"
+
+  Scenario: Listed buckets have creation dates
+    Given bucket "dated-bucket" exists
+    When I list all buckets
+    Then bucket "dated-bucket" in the list should have a creation date

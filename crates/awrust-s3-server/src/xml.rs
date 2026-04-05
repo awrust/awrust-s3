@@ -49,6 +49,8 @@ pub struct BucketList {
 pub struct BucketEntry {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "CreationDate")]
+    pub creation_date: String,
 }
 
 pub struct XmlResponse<T: Serialize>(pub T);

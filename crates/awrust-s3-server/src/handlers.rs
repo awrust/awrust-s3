@@ -43,10 +43,16 @@ pub async fn delete_bucket(
 }
 
 pub async fn list_buckets(State(store): State<Arc<dyn Store>>) -> Response {
-    let names = store.list_buckets();
+    let summaries = store.list_buckets();
     let result = ListAllMyBucketsResult {
         buckets: BucketList {
-            entries: names.into_iter().map(|name| BucketEntry { name }).collect(),
+            entries: summaries
+                .into_iter()
+                .map(|b| BucketEntry {
+                    name: b.name,
+                    creation_date: format_iso8601(b.created),
+                })
+                .collect(),
         },
     };
     XmlResponse(result).into_response()
