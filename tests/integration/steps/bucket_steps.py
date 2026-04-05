@@ -38,3 +38,16 @@ def step_assert_bucket_not_exists(context, name):
         assert False, f"bucket {name} still exists"
     except ClientError as e:
         assert e.response["Error"]["Code"] in ("404", "NoSuchBucket")
+
+
+@when("I list all buckets")
+def step_list_all_buckets(context):
+    resp = context.s3.list_buckets()
+    context.bucket_list = [b["Name"] for b in resp.get("Buckets", [])]
+
+
+@then('the bucket list should contain "{name}"')
+def step_assert_bucket_in_list(context, name):
+    assert name in context.bucket_list, (
+        f"expected {name} in {context.bucket_list}"
+    )

@@ -1,3 +1,7 @@
+mod fs_store;
+
+pub use fs_store::FsStore;
+
 use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::fmt;
@@ -16,12 +20,8 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StoreError::BucketNotFound(bucket) => {
-                write!(f, "bucket not found: {bucket}")
-            }
-            StoreError::BucketNotEmpty(bucket) => {
-                write!(f, "bucket not empty: {bucket}")
-            }
+            StoreError::BucketNotFound(bucket) => write!(f, "bucket not found: {bucket}"),
+            StoreError::BucketNotEmpty(bucket) => write!(f, "bucket not empty: {bucket}"),
             StoreError::ObjectNotFound { bucket, key } => {
                 write!(f, "object not found: {bucket}/{key}")
             }
@@ -39,13 +39,35 @@ pub struct ObjectSummary {
     pub last_modified: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ObjectMeta {
+    pub size: u64,
+    pub etag: String,
+    pub content_type: String,
+    pub last_modified: u64,
+    pub metadata: HashMap<String, String>,
+}
+
+pub struct PutObject {
+    pub bytes: Vec<u8>,
+    pub content_type: String,
+    pub metadata: HashMap<String, String>,
+}
+
+pub struct GetObject {
+    pub bytes: Vec<u8>,
+    pub meta: ObjectMeta,
+}
+
 pub trait Store: Send + Sync {
     fn create_bucket(&self, name: &str) -> Result<()>;
     fn bucket_exists(&self, name: &str) -> bool;
     fn delete_bucket(&self, name: &str) -> Result<()>;
+    fn list_buckets(&self) -> Vec<String>;
 
-    fn put_object(&self, bucket: &str, key: &str, bytes: Vec<u8>) -> Result<()>;
-    fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>>;
+    fn put_object(&self, bucket: &str, key: &str, input: PutObject) -> Result<()>;
+    fn get_object(&self, bucket: &str, key: &str) -> Result<GetObject>;
+    fn head_object(&self, bucket: &str, key: &str) -> Result<ObjectMeta>;
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()>;
 
     fn list_objects(&self, bucket: &str, prefix: Option<&str>) -> Result<Vec<ObjectSummary>>;
@@ -64,6 +86,9 @@ struct BucketState {
 #[derive(Debug)]
 struct ObjectRecord {
     bytes: Vec<u8>,
+    etag: String,
+    content_type: String,
+    metadata: HashMap<String, String>,
     last_modified: u64,
 }
 
@@ -106,36 +131,80 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    fn put_object(&self, bucket: &str, key: &str, bytes: Vec<u8>) -> Result<()> {
+    fn list_buckets(&self) -> Vec<String> {
+        let buckets = self.buckets.read().expect("lock poisoned");
+        let mut names: Vec<String> = buckets.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    fn put_object(&self, bucket: &str, key: &str, input: PutObject) -> Result<()> {
         let mut buckets = self.buckets.write().expect("lock poisoned");
         let bucket_state = buckets
             .get_mut(bucket)
             .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
 
+        let etag = format!("\"{:x}\"", Md5::digest(&input.bytes));
         bucket_state.objects.insert(
             key.to_string(),
             ObjectRecord {
-                bytes,
+                bytes: input.bytes,
+                etag,
+                content_type: input.content_type,
+                metadata: input.metadata,
                 last_modified: now_secs(),
             },
         );
         Ok(())
     }
 
-    fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>> {
+    fn get_object(&self, bucket: &str, key: &str) -> Result<GetObject> {
         let buckets = self.buckets.read().expect("lock poisoned");
         let bucket_state = buckets
             .get(bucket)
             .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
 
-        bucket_state
+        let record = bucket_state
             .objects
             .get(key)
-            .map(|r| r.bytes.clone())
             .ok_or_else(|| StoreError::ObjectNotFound {
                 bucket: bucket.to_string(),
                 key: key.to_string(),
-            })
+            })?;
+
+        Ok(GetObject {
+            bytes: record.bytes.clone(),
+            meta: ObjectMeta {
+                size: record.bytes.len() as u64,
+                etag: record.etag.clone(),
+                content_type: record.content_type.clone(),
+                last_modified: record.last_modified,
+                metadata: record.metadata.clone(),
+            },
+        })
+    }
+
+    fn head_object(&self, bucket: &str, key: &str) -> Result<ObjectMeta> {
+        let buckets = self.buckets.read().expect("lock poisoned");
+        let bucket_state = buckets
+            .get(bucket)
+            .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
+
+        let record = bucket_state
+            .objects
+            .get(key)
+            .ok_or_else(|| StoreError::ObjectNotFound {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+            })?;
+
+        Ok(ObjectMeta {
+            size: record.bytes.len() as u64,
+            etag: record.etag.clone(),
+            content_type: record.content_type.clone(),
+            last_modified: record.last_modified,
+            metadata: record.metadata.clone(),
+        })
     }
 
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()> {
@@ -144,8 +213,7 @@ impl Store for MemoryStore {
             .get_mut(bucket)
             .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
 
-        let removed = bucket_state.objects.remove(key);
-        if removed.is_none() {
+        if bucket_state.objects.remove(key).is_none() {
             return Err(StoreError::ObjectNotFound {
                 bucket: bucket.to_string(),
                 key: key.to_string(),
@@ -171,7 +239,7 @@ impl Store for MemoryStore {
             .map(|(key, record)| ObjectSummary {
                 key: key.clone(),
                 size: record.bytes.len() as u64,
-                etag: format!("\"{:x}\"", Md5::digest(&record.bytes)),
+                etag: record.etag.clone(),
                 last_modified: record.last_modified,
             })
             .collect();

@@ -19,3 +19,10 @@ Feature: Bucket operations
     Given bucket "idem-bucket" exists
     When I create bucket "idem-bucket"
     Then bucket "idem-bucket" should exist
+
+  Scenario: List all buckets
+    Given bucket "alpha-bucket" exists
+    And bucket "beta-bucket" exists
+    When I list all buckets
+    Then the bucket list should contain "alpha-bucket"
+    And the bucket list should contain "beta-bucket"

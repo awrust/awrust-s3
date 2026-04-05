@@ -2,7 +2,7 @@ mod error;
 mod handlers;
 mod xml;
 
-use awrust_s3_domain::{MemoryStore, Store};
+use awrust_s3_domain::{FsStore, MemoryStore, Store};
 use axum::routing::{get, put};
 use axum::{Json, Router};
 use serde::Serialize;
@@ -21,9 +21,22 @@ struct HealthResponse {
 async fn main() {
     init_tracing();
 
-    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+    let store_type = std::env::var("AWRUST_S3_STORE").unwrap_or_else(|_| "memory".to_string());
+    let store: Arc<dyn Store> = match store_type.as_str() {
+        "fs" => {
+            let data_dir =
+                std::env::var("AWRUST_S3_DATA_DIR").unwrap_or_else(|_| "/data".to_string());
+            info!(backend = "fs", %data_dir, "using filesystem store");
+            Arc::new(FsStore::new(data_dir))
+        }
+        _ => {
+            info!(backend = "memory", "using in-memory store");
+            Arc::new(MemoryStore::new())
+        }
+    };
 
     let app = Router::new()
+        .route("/", get(handlers::list_buckets))
         .route("/health", get(health))
         .route(
             "/:bucket",

@@ -70,3 +70,55 @@ def step_assert_listed_keys(context, expected):
 @then("the operation should fail")
 def step_assert_operation_failed(context):
     assert context.last_error is not None, "expected an error but operation succeeded"
+
+
+@when('I head object "{path}"')
+def step_head_object(context, path):
+    bucket, key = _split(path)
+    context.head_response = context.s3.head_object(Bucket=bucket, Key=key)
+
+
+@then('the head response content length should be "{length}"')
+def step_assert_head_content_length(context, length):
+    actual = str(context.head_response["ContentLength"])
+    assert actual == length, f"expected content-length {length}, got {actual}"
+
+
+@then("the head response should have an etag")
+def step_assert_head_etag(context):
+    etag = context.head_response.get("ETag")
+    assert etag is not None and len(etag) > 0, "expected ETag header"
+
+
+@when('I upload "{path}" with body "{content}" and content type "{ct}"')
+def step_upload_with_ct(context, path, content, ct):
+    bucket, key = _split(path)
+    context.s3.put_object(Bucket=bucket, Key=key, Body=content.encode(), ContentType=ct)
+
+
+@then('object "{path}" should have content type "{expected_ct}"')
+def step_assert_content_type(context, path, expected_ct):
+    bucket, key = _split(path)
+    resp = context.s3.head_object(Bucket=bucket, Key=key)
+    actual = resp["ContentType"]
+    assert actual == expected_ct, f"expected content-type {expected_ct}, got {actual}"
+
+
+@when('I upload "{path}" with body "{content}" and metadata "{meta_str}"')
+def step_upload_with_metadata(context, path, content, meta_str):
+    bucket, key = _split(path)
+    metadata = dict(pair.split("=") for pair in meta_str.split(","))
+    context.s3.put_object(
+        Bucket=bucket, Key=key, Body=content.encode(), Metadata=metadata
+    )
+
+
+@then('object "{path}" should have metadata "{meta_key}" with value "{meta_value}"')
+def step_assert_metadata(context, path, meta_key, meta_value):
+    bucket, key = _split(path)
+    resp = context.s3.head_object(Bucket=bucket, Key=key)
+    metadata = resp.get("Metadata", {})
+    actual = metadata.get(meta_key)
+    assert actual == meta_value, (
+        f"expected metadata {meta_key}={meta_value}, got {actual} (all: {metadata})"
+    )
