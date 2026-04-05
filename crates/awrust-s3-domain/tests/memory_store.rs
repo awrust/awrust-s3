@@ -44,5 +44,6 @@ fn list_with_prefix() {
         .unwrap();
 
     let listed = store.list_objects("bucket", Some("a/")).unwrap();
-    assert_eq!(listed, vec!["a/1.txt".to_string(), "a/2.txt".to_string()]);
+    let keys: Vec<&str> = listed.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, vec!["a/1.txt", "a/2.txt"]);
 }
