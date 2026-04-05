@@ -23,7 +23,9 @@ fn put_get_object() {
 fn delete_object() {
     let store = MemoryStore::new();
     store.create_bucket("bucket").unwrap();
-    store.put_object("bucket", "key", b"payload".to_vec()).unwrap();
+    store
+        .put_object("bucket", "key", b"payload".to_vec())
+        .unwrap();
 
     store.delete_object("bucket", "key").unwrap();
     assert!(store.get_object("bucket", "key").is_err());

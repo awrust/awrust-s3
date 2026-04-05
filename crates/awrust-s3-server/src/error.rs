@@ -1,6 +1,6 @@
+use awrust_s3_domain::StoreError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use awrust_s3_domain::StoreError;
 
 pub struct S3Error(pub StoreError);
 
