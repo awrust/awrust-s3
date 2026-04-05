@@ -22,3 +22,18 @@ Feature: Object operations
   Scenario: Get non-existent object fails
     When I try to get object "obj-bucket/nope.txt"
     Then the operation should fail
+
+  Scenario: HEAD object returns metadata
+    When I put object "obj-bucket/head-test.txt" with content "headme"
+    When I head object "obj-bucket/head-test.txt"
+    Then the head response content length should be "6"
+    And the head response should have an etag
+
+  Scenario: Put and get with content type
+    When I upload "obj-bucket/typed.json" with body "{}" and content type "application/json"
+    Then object "obj-bucket/typed.json" should have content type "application/json"
+
+  Scenario: Put and get with custom metadata
+    When I upload "obj-bucket/meta.txt" with body "data" and metadata "color=blue,env=test"
+    Then object "obj-bucket/meta.txt" should have metadata "color" with value "blue"
+    And object "obj-bucket/meta.txt" should have metadata "env" with value "test"

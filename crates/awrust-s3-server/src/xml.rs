@@ -32,6 +32,20 @@ pub struct ObjectEntry {
     pub etag: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename = "ListAllMyBucketsResult")]
+pub struct ListAllMyBucketsResult {
+    #[serde(rename = "Buckets")]
+    pub buckets: Vec<BucketEntry>,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "Bucket")]
+pub struct BucketEntry {
+    #[serde(rename = "Name")]
+    pub name: String,
+}
+
 pub struct XmlResponse<T: Serialize>(pub T);
 
 impl<T: Serialize> IntoResponse for XmlResponse<T> {

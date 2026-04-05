@@ -1,15 +1,15 @@
-use awrust_s3_domain::Store;
+use awrust_s3_domain::{ObjectMeta, PutObject, Store};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
-use md5::{Digest, Md5};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
-use crate::xml::{ListBucketResult, ObjectEntry, XmlResponse};
+use crate::xml::{BucketEntry, ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse};
 
 type S3Result<T> = Result<T, S3Error>;
 
@@ -38,6 +38,14 @@ pub async fn delete_bucket(
 ) -> S3Result<StatusCode> {
     store.delete_bucket(&bucket)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_buckets(State(store): State<Arc<dyn Store>>) -> Response {
+    let names = store.list_buckets();
+    let result = ListAllMyBucketsResult {
+        buckets: names.into_iter().map(|name| BucketEntry { name }).collect(),
+    };
+    XmlResponse(result).into_response()
 }
 
 #[derive(Deserialize, Default)]
@@ -82,40 +90,44 @@ pub async fn list_objects(
 pub async fn put_object(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> S3Result<Response> {
-    let etag = format!("\"{:x}\"", Md5::digest(&body));
-    store.put_object(&bucket, &key, body.to_vec())?;
-    Ok((StatusCode::OK, [("etag", etag)]).into_response())
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let metadata = extract_amz_meta(&headers);
+
+    let input = PutObject {
+        bytes: body.to_vec(),
+        content_type,
+        metadata,
+    };
+
+    store.put_object(&bucket, &key, input)?;
+
+    let meta = store.head_object(&bucket, &key)?;
+    Ok((StatusCode::OK, [("etag", meta.etag)]).into_response())
 }
 
 pub async fn get_object(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> S3Result<Response> {
-    let bytes = store.get_object(&bucket, &key)?;
-    let etag = format!("\"{:x}\"", Md5::digest(&bytes));
-    let len = bytes.len().to_string();
-
-    let mut headers = HeaderMap::new();
-    headers.insert("etag", etag.parse().expect("valid header"));
-    headers.insert("content-length", len.parse().expect("valid header"));
-
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    let obj = store.get_object(&bucket, &key)?;
+    let headers = meta_to_headers(&obj.meta);
+    Ok((StatusCode::OK, headers, obj.bytes).into_response())
 }
 
 pub async fn head_object(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> S3Result<Response> {
-    let bytes = store.get_object(&bucket, &key)?;
-    let etag = format!("\"{:x}\"", Md5::digest(&bytes));
-    let len = bytes.len().to_string();
-
-    let mut headers = HeaderMap::new();
-    headers.insert("etag", etag.parse().expect("valid header"));
-    headers.insert("content-length", len.parse().expect("valid header"));
-
+    let meta = store.head_object(&bucket, &key)?;
+    let headers = meta_to_headers(&meta);
     Ok((StatusCode::OK, headers).into_response())
 }
 
@@ -125,6 +137,51 @@ pub async fn delete_object(
 ) -> S3Result<StatusCode> {
     store.delete_object(&bucket, &key)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn extract_amz_meta(headers: &HeaderMap) -> HashMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            let name_str = name.as_str();
+            if let Some(key) = name_str.strip_prefix("x-amz-meta-") {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (key.to_string(), v.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn meta_to_headers(meta: &ObjectMeta) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("etag", meta.etag.parse().expect("valid header"));
+    headers.insert(
+        "content-length",
+        meta.size.to_string().parse().expect("valid header"),
+    );
+    headers.insert(
+        "content-type",
+        meta.content_type.parse().expect("valid header"),
+    );
+    headers.insert(
+        "last-modified",
+        format_iso8601(meta.last_modified)
+            .parse()
+            .expect("valid header"),
+    );
+
+    for (key, value) in &meta.metadata {
+        let header_name = format!("x-amz-meta-{key}");
+        if let (Ok(name), Ok(val)) = (header_name.parse::<HeaderName>(), value.parse()) {
+            headers.insert(name, val);
+        }
+    }
+
+    headers
 }
 
 fn format_iso8601(epoch_secs: u64) -> String {
