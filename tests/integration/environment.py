@@ -1,6 +1,7 @@
 import os
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.request
 
@@ -30,6 +31,7 @@ def before_all(context):
     context.base_url = f"http://{addr}"
 
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    store = os.environ.get("STORE", "memory")
 
     subprocess.run(
         ["cargo", "build", "-p", "awrust-s3-server"],
@@ -40,7 +42,12 @@ def before_all(context):
 
     env = os.environ.copy()
     env["AWRUST_S3_LISTEN_ADDR"] = addr
+    env["AWRUST_S3_STORE"] = store
     env["RUST_LOG"] = "warn"
+
+    if store == "fs":
+        context._tmpdir = tempfile.TemporaryDirectory()
+        env["AWRUST_S3_DATA_DIR"] = context._tmpdir.name
 
     context.server = subprocess.Popen(
         ["cargo", "run", "-p", "awrust-s3-server"],
@@ -65,3 +72,5 @@ def after_all(context):
     if hasattr(context, "server"):
         context.server.terminate()
         context.server.wait(timeout=5)
+    if hasattr(context, "_tmpdir"):
+        context._tmpdir.cleanup()
