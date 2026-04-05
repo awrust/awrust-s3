@@ -1,5 +1,8 @@
 # awrust-s3
 
+[![CI](https://github.com/awrust/awrust-s3/actions/workflows/ci.yml/badge.svg)](https://github.com/awrust/awrust-s3/actions/workflows/ci.yml)
+[![Release](https://github.com/awrust/awrust-s3/actions/workflows/release.yml/badge.svg)](https://github.com/awrust/awrust-s3/actions/workflows/release.yml)
+
 Minimal, deterministic S3-compatible emulator written in Rust. Designed for local development, integration tests, and CI pipelines.
 
 Status: **v0 complete.**
