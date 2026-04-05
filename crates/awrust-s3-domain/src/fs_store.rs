@@ -117,21 +117,29 @@ impl Store for FsStore {
         Ok(())
     }
 
-    fn list_buckets(&self) -> Vec<String> {
-        let mut names: Vec<String> = fs::read_dir(&self.root)
+    fn list_buckets(&self) -> Vec<crate::BucketSummary> {
+        let mut summaries: Vec<crate::BucketSummary> = fs::read_dir(&self.root)
             .into_iter()
             .flatten()
             .filter_map(|e| {
                 let e = e.ok()?;
-                if e.path().is_dir() {
-                    e.file_name().into_string().ok()
-                } else {
-                    None
+                let path = e.path();
+                if !path.is_dir() {
+                    return None;
                 }
+                let name = e.file_name().into_string().ok()?;
+                let created = e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.created().ok())
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                Some(crate::BucketSummary { name, created })
             })
             .collect();
-        names.sort();
-        names
+        summaries.sort_by(|a, b| a.name.cmp(&b.name));
+        summaries
     }
 
     fn put_object(&self, bucket: &str, key: &str, input: PutObject) -> Result<()> {
@@ -282,7 +290,10 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_bucket("bravo").unwrap();
         store.create_bucket("alpha").unwrap();
-        assert_eq!(store.list_buckets(), vec!["alpha", "bravo"]);
+        let buckets = store.list_buckets();
+        let names: Vec<&str> = buckets.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "bravo"]);
+        assert!(buckets[0].created > 0);
     }
 
     #[test]

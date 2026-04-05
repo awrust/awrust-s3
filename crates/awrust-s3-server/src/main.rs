@@ -3,14 +3,19 @@ mod handlers;
 mod xml;
 
 use awrust_s3_domain::{FsStore, MemoryStore, Store};
+use axum::extract::State;
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::{get, put};
-use axum::{Json, Router};
+use axum::{Json, Router, extract::Request};
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt};
+use uuid::Uuid;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -36,7 +41,6 @@ async fn main() {
     };
 
     let app = Router::new()
-        .route("/", get(handlers::list_buckets))
         .route("/health", get(health))
         .route(
             "/:bucket",
@@ -52,7 +56,17 @@ async fn main() {
                 .head(handlers::head_object)
                 .delete(handlers::delete_object),
         )
+        .fallback(
+            |State(store): axum::extract::State<Arc<dyn Store>>, req: Request| async move {
+                if req.uri().path() == "/" {
+                    handlers::list_buckets(axum::extract::State(store)).await
+                } else {
+                    axum::http::StatusCode::NOT_FOUND.into_response()
+                }
+            },
+        )
         .with_state(store)
+        .layer(middleware::from_fn(request_id))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -72,13 +86,22 @@ async fn main() {
     axum::serve(listener, app).await.expect("server error");
 }
 
+async fn request_id(req: Request, next: Next) -> Response {
+    let id = Uuid::new_v4().to_string();
+    let mut resp = next.run(req).await;
+    resp.headers_mut()
+        .insert("x-amz-request-id", id.parse().expect("valid header"));
+    resp
+}
+
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string()));
+    let filter =
+        EnvFilter::try_new(std::env::var("AWRUST_LOG").unwrap_or_else(|_| "info".to_string()))
+            .expect("valid log filter");
 
     fmt()
         .json()

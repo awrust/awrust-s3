@@ -43,7 +43,8 @@ def step_assert_bucket_not_exists(context, name):
 @when("I list all buckets")
 def step_list_all_buckets(context):
     resp = context.s3.list_buckets()
-    context.bucket_list = [b["Name"] for b in resp.get("Buckets", [])]
+    context.bucket_list_raw = resp.get("Buckets", [])
+    context.bucket_list = [b["Name"] for b in context.bucket_list_raw]
 
 
 @then('the bucket list should contain "{name}"')
@@ -51,3 +52,12 @@ def step_assert_bucket_in_list(context, name):
     assert name in context.bucket_list, (
         f"expected {name} in {context.bucket_list}"
     )
+
+
+@then('bucket "{name}" in the list should have a creation date')
+def step_assert_bucket_has_creation_date(context, name):
+    for b in context.bucket_list_raw:
+        if b["Name"] == name:
+            assert "CreationDate" in b, f"bucket {name} missing CreationDate"
+            return
+    assert False, f"bucket {name} not found in list"

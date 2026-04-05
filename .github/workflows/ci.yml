@@ -35,9 +35,12 @@ jobs:
         run: cargo build --release
 
   integration:
-    name: Integration Tests
+    name: Integration Tests (${{ matrix.store }})
     runs-on: ubuntu-latest
     needs: build
+    strategy:
+      matrix:
+        store: [memory, fs]
     steps:
       - uses: actions/checkout@v4
 
@@ -57,4 +60,33 @@ jobs:
 
       - name: Run BDD tests
         working-directory: tests/integration
+        env:
+          STORE: ${{ matrix.store }}
+        run: behave
+
+  docker:
+    name: Docker Integration (${{ matrix.store }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        store: [memory, fs]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r tests/integration/requirements.txt
+
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t awrust-s3:ci .
+
+      - name: Run BDD tests against Docker image
+        working-directory: tests/integration
+        env:
+          IMAGE: awrust-s3:ci
+          STORE: ${{ matrix.store }}
         run: behave

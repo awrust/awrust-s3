@@ -27,7 +27,10 @@ fn list_buckets() {
     let store = MemoryStore::new();
     store.create_bucket("bravo").unwrap();
     store.create_bucket("alpha").unwrap();
-    assert_eq!(store.list_buckets(), vec!["alpha", "bravo"]);
+    let buckets = store.list_buckets();
+    let names: Vec<&str> = buckets.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, vec!["alpha", "bravo"]);
+    assert!(buckets[0].created > 0);
 }
 
 #[test]

@@ -36,14 +36,21 @@ pub struct ObjectEntry {
 #[serde(rename = "ListAllMyBucketsResult")]
 pub struct ListAllMyBucketsResult {
     #[serde(rename = "Buckets")]
-    pub buckets: Vec<BucketEntry>,
+    pub buckets: BucketList,
 }
 
 #[derive(Serialize)]
-#[serde(rename = "Bucket")]
+pub struct BucketList {
+    #[serde(rename = "Bucket")]
+    pub entries: Vec<BucketEntry>,
+}
+
+#[derive(Serialize)]
 pub struct BucketEntry {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "CreationDate")]
+    pub creation_date: String,
 }
 
 pub struct XmlResponse<T: Serialize>(pub T);
