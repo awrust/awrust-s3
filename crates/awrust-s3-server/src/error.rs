@@ -28,6 +28,19 @@ impl IntoResponse for S3Error {
                 "NoSuchKey",
                 format!("The specified key does not exist: {bucket}/{key}"),
             ),
+            StoreError::UploadNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "NoSuchUpload",
+                format!("The specified upload does not exist: {id}"),
+            ),
+            StoreError::InvalidPart {
+                upload_id,
+                part_number,
+            } => (
+                StatusCode::BAD_REQUEST,
+                "InvalidPart",
+                format!("Invalid part {part_number} for upload {upload_id}"),
+            ),
         };
 
         let body = format!(

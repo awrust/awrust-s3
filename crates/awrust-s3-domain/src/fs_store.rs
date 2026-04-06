@@ -1,10 +1,14 @@
-use crate::{GetObject, ObjectMeta, ObjectSummary, PutObject, Result, Store, StoreError};
+use crate::{
+    GetObject, ListObjectsPage, ListObjectsParams, ObjectMeta, ObjectSummary, PutObject, Result,
+    Store, StoreError, composite_etag, decode_continuation_token, encode_continuation_token,
+};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 pub struct FsStore {
     root: PathBuf,
@@ -17,6 +21,13 @@ struct MetaFile {
     metadata: HashMap<String, String>,
     last_modified: u64,
     size: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UploadMeta {
+    key: String,
+    content_type: String,
+    metadata: HashMap<String, String>,
 }
 
 fn encode_key(key: &str) -> String {
@@ -51,6 +62,14 @@ impl FsStore {
 
     fn meta_dir(&self, bucket: &str) -> PathBuf {
         self.bucket_path(bucket).join("meta")
+    }
+
+    fn uploads_dir(&self, bucket: &str) -> PathBuf {
+        self.bucket_path(bucket).join("uploads")
+    }
+
+    fn upload_dir(&self, bucket: &str, upload_id: &str) -> PathBuf {
+        self.uploads_dir(bucket).join(upload_id)
     }
 
     fn object_path(&self, bucket: &str, key: &str) -> PathBuf {
@@ -91,10 +110,8 @@ fn now_secs() -> u64 {
 
 impl Store for FsStore {
     fn create_bucket(&self, name: &str) -> Result<()> {
-        let bp = self.bucket_path(name);
         fs::create_dir_all(self.objects_dir(name)).ok();
         fs::create_dir_all(self.meta_dir(name)).ok();
-        let _ = bp;
         Ok(())
     }
 
@@ -123,8 +140,7 @@ impl Store for FsStore {
             .flatten()
             .filter_map(|e| {
                 let e = e.ok()?;
-                let path = e.path();
-                if !path.is_dir() {
+                if !e.path().is_dir() {
                     return None;
                 }
                 let name = e.file_name().into_string().ok()?;
@@ -216,8 +232,13 @@ impl Store for FsStore {
         Ok(())
     }
 
-    fn list_objects(&self, bucket: &str, prefix: Option<&str>) -> Result<Vec<ObjectSummary>> {
+    fn list_objects(&self, bucket: &str, params: &ListObjectsParams) -> Result<ListObjectsPage> {
         self.require_bucket(bucket)?;
+
+        let after_key = params
+            .continuation_token
+            .as_deref()
+            .and_then(decode_continuation_token);
 
         let objects_dir = self.objects_dir(bucket);
         let mut summaries: Vec<ObjectSummary> = fs::read_dir(&objects_dir)
@@ -228,8 +249,14 @@ impl Store for FsStore {
                 let encoded = e.file_name().into_string().ok()?;
                 let key = decode_key(&encoded);
 
-                if let Some(pfx) = prefix
-                    && !key.starts_with(pfx)
+                if let Some(pfx) = &params.prefix
+                    && !key.starts_with(pfx.as_str())
+                {
+                    return None;
+                }
+
+                if let Some(last) = &after_key
+                    && key.as_str() <= last.as_str()
                 {
                     return None;
                 }
@@ -245,7 +272,124 @@ impl Store for FsStore {
             .collect();
 
         summaries.sort_by(|a, b| a.key.cmp(&b.key));
-        Ok(summaries)
+
+        let is_truncated = summaries.len() > params.max_keys;
+        summaries.truncate(params.max_keys);
+
+        let next_continuation_token = if is_truncated {
+            summaries.last().map(|s| encode_continuation_token(&s.key))
+        } else {
+            None
+        };
+
+        Ok(ListObjectsPage {
+            objects: summaries,
+            is_truncated,
+            next_continuation_token,
+        })
+    }
+
+    fn initiate_multipart(
+        &self,
+        bucket: &str,
+        key: &str,
+        content_type: &str,
+        metadata: HashMap<String, String>,
+    ) -> Result<String> {
+        self.require_bucket(bucket)?;
+
+        let upload_id = Uuid::new_v4().to_string();
+        let upload_dir = self.upload_dir(bucket, &upload_id);
+        let parts_dir = upload_dir.join("parts");
+        fs::create_dir_all(&parts_dir).expect("create upload dir");
+
+        let meta = UploadMeta {
+            key: key.to_string(),
+            content_type: content_type.to_string(),
+            metadata,
+        };
+        let meta_json = serde_json::to_vec(&meta).expect("serialize upload meta");
+        fs::write(upload_dir.join("meta.json"), &meta_json).expect("write upload meta");
+
+        Ok(upload_id)
+    }
+
+    fn upload_part(
+        &self,
+        bucket: &str,
+        _key: &str,
+        upload_id: &str,
+        part_number: u32,
+        bytes: Vec<u8>,
+    ) -> Result<String> {
+        let upload_dir = self.upload_dir(bucket, upload_id);
+        if !upload_dir.is_dir() {
+            return Err(StoreError::UploadNotFound(upload_id.to_string()));
+        }
+
+        let etag = format!("\"{:x}\"", Md5::digest(&bytes));
+        let part_path = upload_dir.join("parts").join(format!("{part_number:05}"));
+        fs::write(part_path, &bytes).expect("write part");
+
+        Ok(etag)
+    }
+
+    fn complete_multipart(
+        &self,
+        bucket: &str,
+        _key: &str,
+        upload_id: &str,
+        parts: &[(u32, String)],
+    ) -> Result<String> {
+        let upload_dir = self.upload_dir(bucket, upload_id);
+        if !upload_dir.is_dir() {
+            return Err(StoreError::UploadNotFound(upload_id.to_string()));
+        }
+
+        let upload_meta: UploadMeta =
+            serde_json::from_slice(&fs::read(upload_dir.join("meta.json")).expect("read meta"))
+                .expect("parse meta");
+
+        let mut assembled = Vec::new();
+        let mut part_digests = Vec::new();
+
+        for (part_number, _etag) in parts {
+            let part_path = upload_dir.join("parts").join(format!("{part_number:05}"));
+            let part_bytes = fs::read(&part_path).map_err(|_| StoreError::InvalidPart {
+                upload_id: upload_id.to_string(),
+                part_number: *part_number,
+            })?;
+            part_digests.push(Md5::digest(&part_bytes).to_vec());
+            assembled.extend_from_slice(&part_bytes);
+        }
+
+        let etag = composite_etag(&part_digests);
+        let size = assembled.len() as u64;
+
+        fs::write(self.object_path(bucket, &upload_meta.key), &assembled).expect("write object");
+
+        let meta = MetaFile {
+            etag: etag.clone(),
+            content_type: upload_meta.content_type,
+            metadata: upload_meta.metadata,
+            last_modified: now_secs(),
+            size,
+        };
+        let meta_json = serde_json::to_vec(&meta).expect("serialize meta");
+        fs::write(self.meta_path(bucket, &upload_meta.key), &meta_json).expect("write meta");
+
+        fs::remove_dir_all(&upload_dir).ok();
+
+        Ok(etag)
+    }
+
+    fn abort_multipart(&self, bucket: &str, _key: &str, upload_id: &str) -> Result<()> {
+        let upload_dir = self.upload_dir(bucket, upload_id);
+        if !upload_dir.is_dir() {
+            return Err(StoreError::UploadNotFound(upload_id.to_string()));
+        }
+        fs::remove_dir_all(&upload_dir).ok();
+        Ok(())
     }
 }
 
@@ -339,8 +483,17 @@ mod tests {
         put(&store, "b", "a/2.txt", b"two");
         put(&store, "b", "b/1.txt", b"three");
 
-        let listed = store.list_objects("b", Some("a/")).unwrap();
-        let keys: Vec<&str> = listed.iter().map(|o| o.key.as_str()).collect();
+        let page = store
+            .list_objects(
+                "b",
+                &ListObjectsParams {
+                    prefix: Some("a/".to_string()),
+                    continuation_token: None,
+                    max_keys: 1000,
+                },
+            )
+            .unwrap();
+        let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
         assert_eq!(keys, vec!["a/1.txt", "a/2.txt"]);
     }
 
@@ -350,5 +503,76 @@ mod tests {
         store.create_bucket("b").unwrap();
         put(&store, "b", "file", b"data");
         assert!(store.delete_bucket("b").is_err());
+    }
+
+    #[test]
+    fn multipart_upload() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+
+        let upload_id = store
+            .initiate_multipart("b", "big", "application/octet-stream", HashMap::new())
+            .unwrap();
+        let etag1 = store
+            .upload_part("b", "big", &upload_id, 1, b"part1".to_vec())
+            .unwrap();
+        let etag2 = store
+            .upload_part("b", "big", &upload_id, 2, b"part2".to_vec())
+            .unwrap();
+        store
+            .complete_multipart("b", "big", &upload_id, &[(1, etag1), (2, etag2)])
+            .unwrap();
+
+        let obj = store.get_object("b", "big").unwrap();
+        assert_eq!(obj.bytes, b"part1part2");
+    }
+
+    #[test]
+    fn pagination() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+        for i in 0..5 {
+            put(&store, "b", &format!("key{i:02}"), b"data");
+        }
+
+        let page1 = store
+            .list_objects(
+                "b",
+                &ListObjectsParams {
+                    prefix: None,
+                    continuation_token: None,
+                    max_keys: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(page1.objects.len(), 2);
+        assert!(page1.is_truncated);
+        assert!(page1.next_continuation_token.is_some());
+
+        let page2 = store
+            .list_objects(
+                "b",
+                &ListObjectsParams {
+                    prefix: None,
+                    continuation_token: page1.next_continuation_token,
+                    max_keys: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(page2.objects.len(), 2);
+        assert!(page2.is_truncated);
+
+        let page3 = store
+            .list_objects(
+                "b",
+                &ListObjectsParams {
+                    prefix: None,
+                    continuation_token: page2.next_continuation_token,
+                    max_keys: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(page3.objects.len(), 1);
+        assert!(!page3.is_truncated);
     }
 }

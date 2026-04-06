@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use quick_xml::se::to_string;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 #[serde(rename = "ListBucketResult")]
@@ -16,6 +16,13 @@ pub struct ListBucketResult {
     pub max_keys: usize,
     #[serde(rename = "IsTruncated")]
     pub is_truncated: bool,
+    #[serde(rename = "ContinuationToken", skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
+    #[serde(
+        rename = "NextContinuationToken",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_continuation_token: Option<String>,
     #[serde(rename = "Contents", default)]
     pub contents: Vec<ObjectEntry>,
 }
@@ -51,6 +58,43 @@ pub struct BucketEntry {
     pub name: String,
     #[serde(rename = "CreationDate")]
     pub creation_date: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "InitiateMultipartUploadResult")]
+pub struct InitiateMultipartUploadResult {
+    #[serde(rename = "Bucket")]
+    pub bucket: String,
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "UploadId")]
+    pub upload_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "CompleteMultipartUploadResult")]
+pub struct CompleteMultipartUploadResult {
+    #[serde(rename = "Bucket")]
+    pub bucket: String,
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "ETag")]
+    pub etag: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "CompleteMultipartUpload")]
+pub struct CompleteMultipartUploadRequest {
+    #[serde(rename = "Part")]
+    pub parts: Vec<CompletedPart>,
+}
+
+#[derive(Deserialize)]
+pub struct CompletedPart {
+    #[serde(rename = "PartNumber")]
+    pub part_number: u32,
+    #[serde(rename = "ETag")]
+    pub etag: String,
 }
 
 pub struct XmlResponse<T: Serialize>(pub T);

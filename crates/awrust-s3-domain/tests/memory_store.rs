@@ -1,4 +1,4 @@
-use awrust_s3_domain::{MemoryStore, PutObject, Store};
+use awrust_s3_domain::{ListObjectsParams, MemoryStore, PutObject, Store};
 use std::collections::HashMap;
 
 fn put(store: &MemoryStore, bucket: &str, key: &str, bytes: &[u8]) {
@@ -95,7 +95,111 @@ fn list_with_prefix() {
     put(&store, "bucket", "a/2.txt", b"two");
     put(&store, "bucket", "b/1.txt", b"three");
 
-    let listed = store.list_objects("bucket", Some("a/")).unwrap();
-    let keys: Vec<&str> = listed.iter().map(|o| o.key.as_str()).collect();
+    let page = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: Some("a/".to_string()),
+                continuation_token: None,
+                max_keys: 1000,
+            },
+        )
+        .unwrap();
+    let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
     assert_eq!(keys, vec!["a/1.txt", "a/2.txt"]);
+}
+
+#[test]
+fn multipart_upload() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+
+    let upload_id = store
+        .initiate_multipart("bucket", "big", "application/octet-stream", HashMap::new())
+        .unwrap();
+    let etag1 = store
+        .upload_part("bucket", "big", &upload_id, 1, b"part1".to_vec())
+        .unwrap();
+    let etag2 = store
+        .upload_part("bucket", "big", &upload_id, 2, b"part2".to_vec())
+        .unwrap();
+    store
+        .complete_multipart("bucket", "big", &upload_id, &[(1, etag1), (2, etag2)])
+        .unwrap();
+
+    let obj = store.get_object("bucket", "big").unwrap();
+    assert_eq!(obj.bytes, b"part1part2");
+    assert!(obj.meta.etag.contains('-'));
+}
+
+#[test]
+fn abort_multipart() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+
+    let upload_id = store
+        .initiate_multipart(
+            "bucket",
+            "aborted",
+            "application/octet-stream",
+            HashMap::new(),
+        )
+        .unwrap();
+    store
+        .upload_part("bucket", "aborted", &upload_id, 1, b"data".to_vec())
+        .unwrap();
+    store
+        .abort_multipart("bucket", "aborted", &upload_id)
+        .unwrap();
+
+    assert!(store.get_object("bucket", "aborted").is_err());
+}
+
+#[test]
+fn pagination() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    for i in 0..5 {
+        put(&store, "bucket", &format!("key{i:02}"), b"data");
+    }
+
+    let page1 = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: None,
+                continuation_token: None,
+                max_keys: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(page1.objects.len(), 2);
+    assert!(page1.is_truncated);
+    assert!(page1.next_continuation_token.is_some());
+
+    let page2 = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: None,
+                continuation_token: page1.next_continuation_token,
+                max_keys: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(page2.objects.len(), 2);
+    assert!(page2.is_truncated);
+
+    let page3 = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: None,
+                continuation_token: page2.next_continuation_token,
+                max_keys: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(page3.objects.len(), 1);
+    assert!(!page3.is_truncated);
 }
