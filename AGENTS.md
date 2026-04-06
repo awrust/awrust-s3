@@ -30,6 +30,15 @@ IMAGE=awrust-s3:test STORE=fs behave     # Docker + filesystem
 ### New dependencies require an ADR
 Any new crate dependency must have an Architecture Decision Record in `docs/adr/` before merging. Follow the existing format (ADR-0001 through ADR-0007).
 
+### Pull requests
+When opening a PR, follow the template in `.github/pull_request_template.md`. Commit messages use the format:
+
+```
+S3-XXX Concise summary explaining the "what" (#PR)
+
+Context on "why" and "how". Each line limited to 80 characters.
+```
+
 ## Code principles
 
 - No comments; code is truth
