@@ -27,3 +27,7 @@ They exist to preserve context and prevent repeated debates.
 | 0001 | Use Tokio as async runtime | Accepted |
 | 0002 | Use Axum as HTTP framework | Accepted |
 | 0003 | Use Tracing for structured logging | Accepted |
+| 0004 | Use quick-xml for S3 XML serialization | Accepted |
+| 0005 | Use MD5 for ETag computation | Accepted |
+| 0006 | Use Serde as the serialization framework | Accepted |
+| 0007 | Use Behave and boto3 for BDD integration testing | Accepted |
