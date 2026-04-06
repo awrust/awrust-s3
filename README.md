@@ -1,8 +1,11 @@
 # awrust-s3
 
+[![CI](https://github.com/awrust/awrust-s3/actions/workflows/ci.yml/badge.svg)](https://github.com/awrust/awrust-s3/actions/workflows/ci.yml)
+[![Release](https://github.com/awrust/awrust-s3/actions/workflows/release.yml/badge.svg)](https://github.com/awrust/awrust-s3/actions/workflows/release.yml)
+
 Minimal, deterministic S3-compatible emulator written in Rust. Designed for local development, integration tests, and CI pipelines.
 
-Status: **v0 complete.**
+Status: **v0.2 complete.**
 
 ## Quick start
 
@@ -25,11 +28,22 @@ cargo run -p awrust-s3-server
 | `AWRUST_S3_DATA_DIR` | `/data` | Data directory when `store=fs` |
 | `AWRUST_LOG` | `info` | Log level |
 
+## Supported operations
+
+- Bucket CRUD (create, head, delete, list all)
+- Object CRUD (put, get, head, delete)
+- ListObjectsV2 with prefix filtering and pagination
+- Multipart upload (initiate, upload part, complete, abort)
+- Range requests (byte ranges on GET)
+- Content-Type, ETag, Last-Modified, x-amz-meta-* headers
+- x-amz-request-id on every response
+
 ## Usage with AWS CLI
 
 ```bash
 aws --endpoint-url=http://localhost:4566 --no-sign-request s3 mb s3://my-bucket
 aws --endpoint-url=http://localhost:4566 --no-sign-request s3 cp file.txt s3://my-bucket/file.txt
+aws --endpoint-url=http://localhost:4566 --no-sign-request s3 cp large.bin s3://my-bucket/large.bin  # multipart
 aws --endpoint-url=http://localhost:4566 --no-sign-request s3 ls s3://my-bucket/
 aws --endpoint-url=http://localhost:4566 --no-sign-request s3 ls
 aws --endpoint-url=http://localhost:4566 --no-sign-request s3 rm s3://my-bucket/file.txt

@@ -1,4 +1,4 @@
-use awrust_s3_domain::{ObjectMeta, PutObject, Store};
+use awrust_s3_domain::{ListObjectsParams, ObjectMeta, PutObject, Store};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
@@ -10,7 +10,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
 use crate::xml::{
-    BucketEntry, BucketList, ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
+    BucketEntry, BucketList, CompleteMultipartUploadResult, InitiateMultipartUploadResult,
+    ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -63,6 +64,8 @@ pub struct ListParams {
     pub prefix: Option<String>,
     #[serde(rename = "max-keys")]
     pub max_keys: Option<usize>,
+    #[serde(rename = "continuation-token")]
+    pub continuation_token: Option<String>,
 }
 
 pub async fn list_objects(
@@ -70,20 +73,26 @@ pub async fn list_objects(
     Path(bucket): Path<String>,
     Query(params): Query<ListParams>,
 ) -> S3Result<Response> {
-    let prefix = params.prefix.as_deref();
-    let objects = store.list_objects(&bucket, prefix)?;
     let max_keys = params.max_keys.unwrap_or(1000);
-
-    let truncated = objects.len() > max_keys;
-    let objects: Vec<_> = objects.into_iter().take(max_keys).collect();
+    let page = store.list_objects(
+        &bucket,
+        &ListObjectsParams {
+            prefix: params.prefix.clone(),
+            continuation_token: params.continuation_token.clone(),
+            max_keys,
+        },
+    )?;
 
     let result = ListBucketResult {
         name: bucket,
-        prefix: prefix.unwrap_or_default().to_string(),
-        key_count: objects.len(),
+        prefix: params.prefix.unwrap_or_default(),
+        key_count: page.objects.len(),
         max_keys,
-        is_truncated: truncated,
-        contents: objects
+        is_truncated: page.is_truncated,
+        continuation_token: params.continuation_token,
+        next_continuation_token: page.next_continuation_token,
+        contents: page
+            .objects
             .into_iter()
             .map(|o| ObjectEntry {
                 key: o.key,
@@ -97,12 +106,27 @@ pub async fn list_objects(
     Ok(XmlResponse(result).into_response())
 }
 
-pub async fn put_object(
+#[derive(Deserialize, Default)]
+pub struct ObjectQueryParams {
+    #[serde(rename = "uploadId")]
+    pub upload_id: Option<String>,
+    #[serde(rename = "partNumber")]
+    pub part_number: Option<u32>,
+    pub uploads: Option<String>,
+}
+
+pub async fn put_object_or_part(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<ObjectQueryParams>,
     headers: HeaderMap,
     body: Bytes,
 ) -> S3Result<Response> {
+    if let (Some(upload_id), Some(part_number)) = (&params.upload_id, params.part_number) {
+        let etag = store.upload_part(&bucket, &key, upload_id, part_number, body.to_vec())?;
+        return Ok((StatusCode::OK, [("etag", etag)]).into_response());
+    }
+
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
@@ -111,25 +135,104 @@ pub async fn put_object(
 
     let metadata = extract_amz_meta(&headers);
 
-    let input = PutObject {
-        bytes: body.to_vec(),
-        content_type,
-        metadata,
-    };
-
-    store.put_object(&bucket, &key, input)?;
+    store.put_object(
+        &bucket,
+        &key,
+        PutObject {
+            bytes: body.to_vec(),
+            content_type,
+            metadata,
+        },
+    )?;
 
     let meta = store.head_object(&bucket, &key)?;
     Ok((StatusCode::OK, [("etag", meta.etag)]).into_response())
 }
 
+pub async fn post_object(
+    State(store): State<Arc<dyn Store>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<ObjectQueryParams>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> S3Result<Response> {
+    if params.uploads.is_some() {
+        let content_type = headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let metadata = extract_amz_meta(&headers);
+
+        let upload_id = store.initiate_multipart(&bucket, &key, &content_type, metadata)?;
+
+        let result = InitiateMultipartUploadResult {
+            bucket,
+            key,
+            upload_id,
+        };
+        return Ok(XmlResponse(result).into_response());
+    }
+
+    if let Some(upload_id) = &params.upload_id {
+        let request: crate::xml::CompleteMultipartUploadRequest =
+            quick_xml::de::from_str(&String::from_utf8_lossy(&body))
+                .map_err(|_| awrust_s3_domain::StoreError::UploadNotFound(upload_id.clone()))?;
+
+        let parts: Vec<(u32, String)> = request
+            .parts
+            .into_iter()
+            .map(|p| (p.part_number, p.etag))
+            .collect();
+
+        let etag = store.complete_multipart(&bucket, &key, upload_id, &parts)?;
+
+        let result = CompleteMultipartUploadResult { bucket, key, etag };
+        return Ok(XmlResponse(result).into_response());
+    }
+
+    Ok(StatusCode::BAD_REQUEST.into_response())
+}
+
 pub async fn get_object(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> S3Result<Response> {
     let obj = store.get_object(&bucket, &key)?;
-    let headers = meta_to_headers(&obj.meta);
-    Ok((StatusCode::OK, headers, obj.bytes).into_response())
+    let total_size = obj.bytes.len();
+
+    if let Some(range_header) = headers.get("range").and_then(|v| v.to_str().ok()) {
+        if let Some((start, end)) = parse_range(range_header, total_size) {
+            let slice = obj.bytes[start..=end].to_vec();
+            let mut resp_headers = meta_to_headers(&obj.meta);
+            resp_headers.insert(
+                "content-range",
+                format!("bytes {start}-{end}/{total_size}")
+                    .parse()
+                    .expect("valid header"),
+            );
+            resp_headers.insert(
+                "content-length",
+                slice.len().to_string().parse().expect("valid header"),
+            );
+            resp_headers.insert("accept-ranges", "bytes".parse().expect("valid header"));
+            return Ok((StatusCode::PARTIAL_CONTENT, resp_headers, slice).into_response());
+        }
+
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert(
+            "content-range",
+            format!("bytes */{total_size}")
+                .parse()
+                .expect("valid header"),
+        );
+        return Ok((StatusCode::RANGE_NOT_SATISFIABLE, resp_headers).into_response());
+    }
+
+    let mut resp_headers = meta_to_headers(&obj.meta);
+    resp_headers.insert("accept-ranges", "bytes".parse().expect("valid header"));
+    Ok((StatusCode::OK, resp_headers, obj.bytes).into_response())
 }
 
 pub async fn head_object(
@@ -137,16 +240,50 @@ pub async fn head_object(
     Path((bucket, key)): Path<(String, String)>,
 ) -> S3Result<Response> {
     let meta = store.head_object(&bucket, &key)?;
-    let headers = meta_to_headers(&meta);
+    let mut headers = meta_to_headers(&meta);
+    headers.insert("accept-ranges", "bytes".parse().expect("valid header"));
     Ok((StatusCode::OK, headers).into_response())
 }
 
-pub async fn delete_object(
+pub async fn delete_object_or_abort(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<ObjectQueryParams>,
 ) -> S3Result<StatusCode> {
+    if let Some(upload_id) = &params.upload_id {
+        store.abort_multipart(&bucket, &key, upload_id)?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     store.delete_object(&bucket, &key)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn parse_range(header: &str, total: usize) -> Option<(usize, usize)> {
+    let range_str = header.strip_prefix("bytes=")?;
+
+    if let Some(suffix) = range_str.strip_prefix('-') {
+        let n: usize = suffix.parse().ok()?;
+        if n == 0 || n > total {
+            return None;
+        }
+        return Some((total - n, total - 1));
+    }
+
+    let (start_str, end_str) = range_str.split_once('-')?;
+    let start: usize = start_str.parse().ok()?;
+
+    if end_str.is_empty() {
+        if start >= total {
+            return None;
+        }
+        return Some((start, total - 1));
+    }
+
+    let end: usize = end_str.parse().ok()?;
+    if start > end || start >= total {
+        return None;
+    }
+    Some((start, end.min(total - 1)))
 }
 
 fn extract_amz_meta(headers: &HeaderMap) -> HashMap<String, String> {

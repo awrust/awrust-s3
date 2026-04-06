@@ -1,6 +1,6 @@
-# awrust-s3 — Architecture (v0)
+# awrust-s3 — Architecture
 
-**Status:** v0 complete
+**Status:** v0.2 complete
 **Project:** awrust-s3
 **License:** MIT
 **Primary distribution:** Docker image (Linux amd64/arm64)
@@ -76,32 +76,44 @@ Virtual-host style may be added later.
 
 ---
 
-## 4. Supported API surface (v0)
+## 4. Supported API surface
 
 ### 4.1 Buckets
 
-* `PUT /<bucket>` — Create bucket
+* `PUT /<bucket>` — Create bucket (idempotent)
 * `HEAD /<bucket>` — Check bucket exists
 * `DELETE /<bucket>` — Delete bucket (only if empty)
-* `GET /` — List buckets (optional; minimal ListAllMyBucketsResult)
+* `GET /` — List buckets (`ListAllMyBucketsResult` with `CreationDate`)
 
 ### 4.2 Objects
 
 * `PUT /<bucket>/<key>` — Put object (single-part)
-* `GET /<bucket>/<key>` — Get object
+* `GET /<bucket>/<key>` — Get object (supports `Range` header → 206 Partial Content)
 * `HEAD /<bucket>/<key>` — Object metadata
 * `DELETE /<bucket>/<key>` — Delete object
-* `GET /<bucket>?list-type=2&prefix=...&continuation-token=...` — List objects v2 (minimal)
+* `GET /<bucket>?list-type=2&prefix=...&continuation-token=...&max-keys=...` — List objects v2 with pagination
 
-### 4.3 Headers and metadata (minimal)
+### 4.3 Multipart upload
+
+* `POST /<bucket>/<key>?uploads` — Initiate multipart upload
+* `PUT /<bucket>/<key>?uploadId=X&partNumber=N` — Upload part
+* `POST /<bucket>/<key>?uploadId=X` — Complete multipart upload
+* `DELETE /<bucket>/<key>?uploadId=X` — Abort multipart upload
+
+Composite ETag: `MD5(concat(part_md5s))-N`
+
+### 4.4 Headers and metadata
 
 Supported:
 
 * `Content-Type`
 * `Content-Length`
-* `ETag` (MD5 of payload for single-part uploads)
+* `ETag` (MD5 for single-part, composite for multipart)
 * `Last-Modified`
 * `x-amz-meta-*`
+* `Accept-Ranges: bytes`
+* `Range` / `Content-Range` (byte ranges on GET)
+* `x-amz-request-id` (UUID per request)
 
 Not supported:
 
@@ -109,14 +121,15 @@ Not supported:
 * ACLs
 * Tagging
 * Object versioning
-* Multipart upload (v0)
 
-### 4.4 Errors
+### 4.5 Errors
 
-* `NoSuchBucket`
-* `NoSuchKey`
-* `BucketNotEmpty`
-* Idempotent create bucket behavior (default)
+* `NoSuchBucket` (404)
+* `NoSuchKey` (404)
+* `BucketNotEmpty` (409)
+* `NoSuchUpload` (404)
+* `InvalidPart` (400)
+* `416 Range Not Satisfiable` for invalid byte ranges
 
 ---
 
@@ -350,7 +363,7 @@ awrust-s3/
 * Include ListAllMyBuckets in v0? **Yes** — `GET /` returns `ListAllMyBucketsResult`.
 * Idempotent bucket creation vs strict AWS error? **Idempotent** — `create_bucket` is a no-op if bucket exists.
 * Filesystem store in v0 or v0.2? **v0** — `FsStore` implemented, selectable via `AWRUST_S3_STORE=fs`.
-* Basic range requests in early versions? **Deferred** to v0.x.
+* Basic range requests in early versions? **Yes** — implemented in v0.2 with `Range` header and 206 responses.
 
 ---
 
@@ -361,5 +374,9 @@ Must support:
 ```bash
 aws --endpoint-url=http://localhost:4566 s3 mb s3://test-bucket
 aws --endpoint-url=http://localhost:4566 s3 cp ./file.txt s3://test-bucket/file.txt
+aws --endpoint-url=http://localhost:4566 s3 cp ./large.bin s3://test-bucket/large.bin  # multipart
 aws --endpoint-url=http://localhost:4566 s3 ls s3://test-bucket/
+aws --endpoint-url=http://localhost:4566 s3 ls
+aws --endpoint-url=http://localhost:4566 s3 rm s3://test-bucket/file.txt
+aws --endpoint-url=http://localhost:4566 s3 rb s3://test-bucket
 ```

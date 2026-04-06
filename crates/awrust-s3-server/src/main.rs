@@ -3,7 +3,7 @@ mod handlers;
 mod xml;
 
 use awrust_s3_domain::{FsStore, MemoryStore, Store};
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -51,10 +51,11 @@ async fn main() {
         )
         .route(
             "/:bucket/*key",
-            put(handlers::put_object)
+            put(handlers::put_object_or_part)
                 .get(handlers::get_object)
                 .head(handlers::head_object)
-                .delete(handlers::delete_object),
+                .post(handlers::post_object)
+                .delete(handlers::delete_object_or_abort),
         )
         .fallback(
             |State(store): axum::extract::State<Arc<dyn Store>>, req: Request| async move {
@@ -66,6 +67,7 @@ async fn main() {
             },
         )
         .with_state(store)
+        .layer(DefaultBodyLimit::max(5 * 1024 * 1024 * 1024))
         .layer(middleware::from_fn(request_id))
         .layer(
             TraceLayer::new_for_http()
