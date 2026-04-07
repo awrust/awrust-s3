@@ -10,6 +10,8 @@ pub struct ListBucketResult {
     pub name: String,
     #[serde(rename = "Prefix")]
     pub prefix: String,
+    #[serde(rename = "Delimiter", skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<String>,
     #[serde(rename = "KeyCount")]
     pub key_count: usize,
     #[serde(rename = "MaxKeys")]
@@ -25,6 +27,18 @@ pub struct ListBucketResult {
     pub next_continuation_token: Option<String>,
     #[serde(rename = "Contents", default)]
     pub contents: Vec<ObjectEntry>,
+    #[serde(
+        rename = "CommonPrefixes",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub common_prefixes: Vec<CommonPrefix>,
+}
+
+#[derive(Serialize)]
+pub struct CommonPrefix {
+    #[serde(rename = "Prefix")]
+    pub prefix: String,
 }
 
 #[derive(Serialize)]
