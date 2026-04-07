@@ -10,9 +10,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
 use crate::xml::{
-    BucketEntry, BucketList, CompleteMultipartUploadResult, DeleteErrorEntry, DeleteResult,
-    DeletedEntry, InitiateMultipartUploadResult, ListAllMyBucketsResult, ListBucketResult,
-    ObjectEntry, XmlResponse,
+    BucketEntry, BucketList, CompleteMultipartUploadResult, CopyObjectResult, DeleteErrorEntry,
+    DeleteResult, DeletedEntry, InitiateMultipartUploadResult, ListAllMyBucketsResult,
+    ListBucketResult, ObjectEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -171,6 +171,13 @@ pub async fn put_object_or_part(
     headers: HeaderMap,
     body: Bytes,
 ) -> S3Result<Response> {
+    if let Some(copy_source) = headers
+        .get("x-amz-copy-source")
+        .and_then(|v| v.to_str().ok())
+    {
+        return copy_object(&store, &bucket, &key, copy_source);
+    }
+
     if let (Some(upload_id), Some(part_number)) = (&params.upload_id, params.part_number) {
         let etag = store.upload_part(&bucket, &key, upload_id, part_number, body.to_vec())?;
         return Ok((StatusCode::OK, [("etag", etag)]).into_response());
@@ -305,6 +312,40 @@ pub async fn delete_object_or_abort(
     }
     store.delete_object(&bucket, &key)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn copy_object(
+    store: &Arc<dyn Store>,
+    dst_bucket: &str,
+    dst_key: &str,
+    copy_source: &str,
+) -> S3Result<Response> {
+    let source = copy_source.strip_prefix('/').unwrap_or(copy_source);
+    let (src_bucket, src_key) =
+        source
+            .split_once('/')
+            .ok_or_else(|| awrust_s3_domain::StoreError::ObjectNotFound {
+                bucket: source.to_string(),
+                key: String::new(),
+            })?;
+
+    let obj = store.get_object(src_bucket, src_key)?;
+    store.put_object(
+        dst_bucket,
+        dst_key,
+        PutObject {
+            bytes: obj.bytes,
+            content_type: obj.meta.content_type,
+            metadata: obj.meta.metadata,
+        },
+    )?;
+
+    let meta = store.head_object(dst_bucket, dst_key)?;
+    Ok(XmlResponse(CopyObjectResult {
+        etag: meta.etag,
+        last_modified: format_iso8601(meta.last_modified),
+    })
+    .into_response())
 }
 
 fn parse_range(header: &str, total: usize) -> Option<(usize, usize)> {
