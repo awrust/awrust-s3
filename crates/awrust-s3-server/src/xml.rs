@@ -188,6 +188,48 @@ pub struct LocationConstraint {
     pub region: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "Tagging")]
+pub struct Tagging {
+    #[serde(rename = "TagSet")]
+    pub tag_set: TagSet,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TagSet {
+    #[serde(rename = "Tag", default)]
+    pub tags: Vec<Tag>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Tag {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "Value")]
+    pub value: String,
+}
+
+impl Tagging {
+    pub fn from_map(map: std::collections::HashMap<String, String>) -> Self {
+        let mut tags: Vec<Tag> = map
+            .into_iter()
+            .map(|(key, value)| Tag { key, value })
+            .collect();
+        tags.sort_by(|a, b| a.key.cmp(&b.key));
+        Self {
+            tag_set: TagSet { tags },
+        }
+    }
+
+    pub fn into_map(self) -> std::collections::HashMap<String, String> {
+        self.tag_set
+            .tags
+            .into_iter()
+            .map(|t| (t.key, t.value))
+            .collect()
+    }
+}
+
 pub struct XmlResponse<T: Serialize>(pub T);
 
 impl<T: Serialize> IntoResponse for XmlResponse<T> {

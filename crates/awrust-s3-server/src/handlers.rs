@@ -13,7 +13,7 @@ use crate::xml::{
     BucketEntry, BucketList, CommonPrefix, CompleteMultipartUploadResult, CopyObjectResult,
     DeleteErrorEntry, DeleteResult, DeletedEntry, InitiateMultipartUploadResult,
     ListAllMyBucketsResult, ListBucketResult, ListMultipartUploadsResult, LocationConstraint,
-    ObjectEntry, UploadEntry, XmlResponse,
+    ObjectEntry, Tagging, UploadEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -214,6 +214,7 @@ pub struct ObjectQueryParams {
     #[serde(rename = "partNumber")]
     pub part_number: Option<u32>,
     pub uploads: Option<String>,
+    pub tagging: Option<String>,
 }
 
 pub async fn put_object_or_part(
@@ -223,6 +224,18 @@ pub async fn put_object_or_part(
     headers: HeaderMap,
     body: Bytes,
 ) -> S3Result<Response> {
+    if params.tagging.is_some() {
+        let tagging: Tagging =
+            quick_xml::de::from_str(&String::from_utf8_lossy(&body)).map_err(|_| {
+                awrust_s3_domain::StoreError::ObjectNotFound {
+                    bucket: bucket.clone(),
+                    key: key.clone(),
+                }
+            })?;
+        store.put_object_tagging(&bucket, &key, tagging.into_map())?;
+        return Ok(StatusCode::OK.into_response());
+    }
+
     if let Some(copy_source) = headers
         .get("x-amz-copy-source")
         .and_then(|v| v.to_str().ok())
@@ -305,8 +318,14 @@ pub async fn post_object(
 pub async fn get_object(
     State(store): State<Arc<dyn Store>>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<ObjectQueryParams>,
     headers: HeaderMap,
 ) -> S3Result<Response> {
+    if params.tagging.is_some() {
+        let tags = store.get_object_tagging(&bucket, &key)?;
+        return Ok(XmlResponse(Tagging::from_map(tags)).into_response());
+    }
+
     let obj = store.get_object(&bucket, &key)?;
     let total_size = obj.bytes.len();
 
@@ -358,6 +377,11 @@ pub async fn delete_object_or_abort(
     Path((bucket, key)): Path<(String, String)>,
     Query(params): Query<ObjectQueryParams>,
 ) -> S3Result<StatusCode> {
+    if params.tagging.is_some() {
+        store.delete_object_tagging(&bucket, &key)?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
     if let Some(upload_id) = &params.upload_id {
         store.abort_multipart(&bucket, &key, upload_id)?;
         return Ok(StatusCode::NO_CONTENT);
