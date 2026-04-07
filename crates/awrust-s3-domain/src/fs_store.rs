@@ -1,6 +1,6 @@
 use crate::{
     GetObject, ListObjectsPage, ListObjectsParams, ObjectMeta, ObjectSummary, PutObject, Result,
-    Store, StoreError, apply_delimiter, composite_etag, decode_continuation_token,
+    Store, StoreError, UploadSummary, apply_delimiter, composite_etag, decode_continuation_token,
 };
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,8 @@ struct UploadMeta {
     key: String,
     content_type: String,
     metadata: HashMap<String, String>,
+    #[serde(default)]
+    initiated: u64,
 }
 
 fn encode_key(key: &str) -> String {
@@ -300,6 +302,7 @@ impl Store for FsStore {
             key: key.to_string(),
             content_type: content_type.to_string(),
             metadata,
+            initiated: now_secs(),
         };
         let meta_json = serde_json::to_vec(&meta).expect("serialize upload meta");
         fs::write(upload_dir.join("meta.json"), &meta_json).expect("write upload meta");
@@ -383,6 +386,41 @@ impl Store for FsStore {
         }
         fs::remove_dir_all(&upload_dir).ok();
         Ok(())
+    }
+
+    fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+    ) -> Result<Vec<UploadSummary>> {
+        self.require_bucket(bucket)?;
+
+        let uploads_dir = self.uploads_dir(bucket);
+        let mut summaries: Vec<UploadSummary> = fs::read_dir(&uploads_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let upload_id = entry.file_name().into_string().ok()?;
+                let meta_path = entry.path().join("meta.json");
+                let data = fs::read(&meta_path).ok()?;
+                let meta: UploadMeta = serde_json::from_slice(&data).ok()?;
+
+                if let Some(pfx) = prefix
+                    && !meta.key.starts_with(pfx)
+                {
+                    return None;
+                }
+
+                Some(UploadSummary {
+                    key: meta.key,
+                    upload_id,
+                    initiated: meta.initiated,
+                })
+            })
+            .collect();
+        summaries.sort_by(|a, b| a.key.cmp(&b.key));
+        Ok(summaries)
     }
 }
 
@@ -607,5 +645,30 @@ mod tests {
             .unwrap();
         assert_eq!(page3.objects.len(), 1);
         assert!(!page3.is_truncated);
+    }
+
+    #[test]
+    fn list_multipart_uploads() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+
+        let id1 = store
+            .initiate_multipart("b", "photos/cat.jpg", "image/jpeg", HashMap::new())
+            .unwrap();
+        let id2 = store
+            .initiate_multipart("b", "docs/readme.md", "text/plain", HashMap::new())
+            .unwrap();
+
+        let uploads = store.list_multipart_uploads("b", None).unwrap();
+        assert_eq!(uploads.len(), 2);
+        assert_eq!(uploads[0].key, "docs/readme.md");
+        assert_eq!(uploads[0].upload_id, id2);
+        assert!(uploads[0].initiated > 0);
+        assert_eq!(uploads[1].key, "photos/cat.jpg");
+        assert_eq!(uploads[1].upload_id, id1);
+
+        let filtered = store.list_multipart_uploads("b", Some("docs/")).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].key, "docs/readme.md");
     }
 }

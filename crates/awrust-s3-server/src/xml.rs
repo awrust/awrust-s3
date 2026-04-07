@@ -105,6 +105,27 @@ pub struct CopyObjectResult {
     pub last_modified: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename = "ListMultipartUploadsResult")]
+pub struct ListMultipartUploadsResult {
+    #[serde(rename = "Bucket")]
+    pub bucket: String,
+    #[serde(rename = "Prefix")]
+    pub prefix: String,
+    #[serde(rename = "Upload", default, skip_serializing_if = "Vec::is_empty")]
+    pub uploads: Vec<UploadEntry>,
+}
+
+#[derive(Serialize)]
+pub struct UploadEntry {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "UploadId")]
+    pub upload_id: String,
+    #[serde(rename = "Initiated")]
+    pub initiated: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename = "CompleteMultipartUpload")]
 pub struct CompleteMultipartUploadRequest {

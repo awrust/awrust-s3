@@ -88,6 +88,13 @@ pub struct ListObjectsPage {
     pub next_continuation_token: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadSummary {
+    pub key: String,
+    pub upload_id: String,
+    pub initiated: u64,
+}
+
 pub trait Store: Send + Sync {
     fn create_bucket(&self, name: &str) -> Result<()>;
     fn bucket_exists(&self, name: &str) -> bool;
@@ -123,6 +130,11 @@ pub trait Store: Send + Sync {
         parts: &[(u32, String)],
     ) -> Result<String>;
     fn abort_multipart(&self, bucket: &str, key: &str, upload_id: &str) -> Result<()>;
+    fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+    ) -> Result<Vec<UploadSummary>>;
 }
 
 #[derive(Debug, Default)]
@@ -162,6 +174,7 @@ struct InFlightUpload {
     content_type: String,
     metadata: HashMap<String, String>,
     parts: HashMap<u32, Vec<u8>>,
+    initiated: u64,
 }
 
 fn now_secs() -> u64 {
@@ -448,6 +461,7 @@ impl Store for MemoryStore {
                 content_type: content_type.to_string(),
                 metadata,
                 parts: HashMap::new(),
+                initiated: now_secs(),
             },
         );
         Ok(upload_id)
@@ -526,5 +540,123 @@ impl Store for MemoryStore {
             .remove(upload_id)
             .ok_or_else(|| StoreError::UploadNotFound(upload_id.to_string()))?;
         Ok(())
+    }
+
+    fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+    ) -> Result<Vec<UploadSummary>> {
+        if !self.bucket_exists(bucket) {
+            return Err(StoreError::BucketNotFound(bucket.to_string()));
+        }
+
+        let uploads = self.uploads.read().expect("lock poisoned");
+        let mut summaries: Vec<UploadSummary> = uploads
+            .iter()
+            .filter(|(_, u)| u.bucket == bucket)
+            .filter(|(_, u)| match prefix {
+                Some(pfx) => u.key.starts_with(pfx),
+                None => true,
+            })
+            .map(|(id, u)| UploadSummary {
+                key: u.key.clone(),
+                upload_id: id.clone(),
+                initiated: u.initiated,
+            })
+            .collect();
+        summaries.sort_by(|a, b| a.key.cmp(&b.key));
+        Ok(summaries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_multipart_uploads_empty() {
+        let store = MemoryStore::new();
+        store.create_bucket("b").unwrap();
+        let uploads = store.list_multipart_uploads("b", None).unwrap();
+        assert!(uploads.is_empty());
+    }
+
+    #[test]
+    fn list_multipart_uploads_returns_active() {
+        let store = MemoryStore::new();
+        store.create_bucket("b").unwrap();
+        let id1 = store
+            .initiate_multipart("b", "photos/cat.jpg", "image/jpeg", HashMap::new())
+            .unwrap();
+        let id2 = store
+            .initiate_multipart("b", "docs/readme.md", "text/plain", HashMap::new())
+            .unwrap();
+
+        let uploads = store.list_multipart_uploads("b", None).unwrap();
+        assert_eq!(uploads.len(), 2);
+        assert_eq!(uploads[0].key, "docs/readme.md");
+        assert_eq!(uploads[0].upload_id, id2);
+        assert!(uploads[0].initiated > 0);
+        assert_eq!(uploads[1].key, "photos/cat.jpg");
+        assert_eq!(uploads[1].upload_id, id1);
+    }
+
+    #[test]
+    fn list_multipart_uploads_filters_by_prefix() {
+        let store = MemoryStore::new();
+        store.create_bucket("b").unwrap();
+        store
+            .initiate_multipart("b", "photos/cat.jpg", "image/jpeg", HashMap::new())
+            .unwrap();
+        store
+            .initiate_multipart("b", "docs/readme.md", "text/plain", HashMap::new())
+            .unwrap();
+
+        let uploads = store.list_multipart_uploads("b", Some("photos/")).unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].key, "photos/cat.jpg");
+    }
+
+    #[test]
+    fn list_multipart_uploads_excludes_completed() {
+        let store = MemoryStore::new();
+        store.create_bucket("b").unwrap();
+        let id = store
+            .initiate_multipart("b", "key", "application/octet-stream", HashMap::new())
+            .unwrap();
+        let etag = store
+            .upload_part("b", "key", &id, 1, b"data".to_vec())
+            .unwrap();
+        store
+            .complete_multipart("b", "key", &id, &[(1, etag)])
+            .unwrap();
+
+        let uploads = store.list_multipart_uploads("b", None).unwrap();
+        assert!(uploads.is_empty());
+    }
+
+    #[test]
+    fn list_multipart_uploads_bucket_not_found() {
+        let store = MemoryStore::new();
+        let result = store.list_multipart_uploads("nope", None);
+        assert!(matches!(result, Err(StoreError::BucketNotFound(_))));
+    }
+
+    #[test]
+    fn list_multipart_uploads_scoped_to_bucket() {
+        let store = MemoryStore::new();
+        store.create_bucket("a").unwrap();
+        store.create_bucket("b").unwrap();
+        store
+            .initiate_multipart("a", "key-a", "text/plain", HashMap::new())
+            .unwrap();
+        store
+            .initiate_multipart("b", "key-b", "text/plain", HashMap::new())
+            .unwrap();
+
+        let uploads = store.list_multipart_uploads("a", None).unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].key, "key-a");
     }
 }
