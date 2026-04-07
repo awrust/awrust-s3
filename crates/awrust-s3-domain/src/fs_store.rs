@@ -1,14 +1,18 @@
-use crate::{
-    GetObject, ListObjectsPage, ListObjectsParams, ObjectMeta, ObjectSummary, PutObject, Result,
-    Store, StoreError, UploadSummary, apply_delimiter, composite_etag, decode_continuation_token,
-};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+
+use crate::error::{Result, StoreError};
+use crate::store::Store;
+use crate::types::{
+    BucketSummary, GetObject, ListObjectsPage, ListObjectsParams, ObjectMeta, ObjectSummary,
+    PutObject, UploadSummary,
+};
+use crate::util::{apply_delimiter, composite_etag, decode_continuation_token, now_secs};
 
 pub struct FsStore {
     root: PathBuf,
@@ -110,13 +114,6 @@ impl FsStore {
     }
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_secs()
-}
-
 impl Store for FsStore {
     fn create_bucket(&self, name: &str) -> Result<()> {
         fs::create_dir_all(self.objects_dir(name)).ok();
@@ -143,8 +140,8 @@ impl Store for FsStore {
         Ok(())
     }
 
-    fn list_buckets(&self) -> Vec<crate::BucketSummary> {
-        let mut summaries: Vec<crate::BucketSummary> = fs::read_dir(&self.root)
+    fn list_buckets(&self) -> Vec<BucketSummary> {
+        let mut summaries: Vec<BucketSummary> = fs::read_dir(&self.root)
             .into_iter()
             .flatten()
             .filter_map(|e| {
@@ -160,7 +157,7 @@ impl Store for FsStore {
                     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                Some(crate::BucketSummary { name, created })
+                Some(BucketSummary { name, created })
             })
             .collect();
         summaries.sort_by(|a, b| a.name.cmp(&b.name));
