@@ -1,5 +1,6 @@
 mod error;
 mod handlers;
+mod vhost;
 mod xml;
 
 use awrust_s3_domain::{FsStore, MemoryStore, Store};
@@ -8,7 +9,7 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{get, put};
-use axum::{Json, Router, extract::Request};
+use axum::{Json, Router, ServiceExt, extract::Request};
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -39,6 +40,11 @@ async fn main() {
             Arc::new(MemoryStore::new())
         }
     };
+
+    let base_domain: Arc<String> = Arc::new(
+        std::env::var("AWRUST_S3_BASE_DOMAIN").unwrap_or_else(|_| "localhost".to_string()),
+    );
+    info!(%base_domain, "virtual-host base domain");
 
     let app = Router::new()
         .route("/health", get(health))
@@ -76,6 +82,8 @@ async fn main() {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
+    let app = vhost::VhostService::new(app, base_domain);
+
     let addr: SocketAddr = std::env::var("AWRUST_S3_LISTEN_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:4566".to_string())
         .parse()
@@ -86,7 +94,9 @@ async fn main() {
         .await
         .expect("bind listen addr");
 
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(listener, app.into_make_service())
+        .await
+        .expect("server error");
 }
 
 async fn request_id(req: Request, next: Next) -> Response {

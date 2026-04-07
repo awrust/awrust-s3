@@ -63,7 +63,7 @@ docs/
 
 ## S3 compatibility
 
-- Path-style addressing only: `/<bucket>/<key>`
+- Path-style (`/<bucket>/<key>`) and virtual-host (`bucket.host/<key>`) addressing
 - No auth validation (accept all requests)
 - ETags: MD5 for single-part, composite MD5 for multipart
 - XML responses via quick-xml with serde
@@ -76,4 +76,5 @@ docs/
 | `AWRUST_S3_LISTEN_ADDR` | `0.0.0.0:4566` | Listen address |
 | `AWRUST_S3_STORE` | `memory` | `memory` or `fs` |
 | `AWRUST_S3_DATA_DIR` | `/data` | Data dir for fs backend |
+| `AWRUST_S3_BASE_DOMAIN` | `localhost` | Base domain for virtual-host addressing |
 | `AWRUST_LOG` | `info` | Log level |
