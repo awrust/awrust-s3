@@ -12,7 +12,8 @@ use crate::error::S3Error;
 use crate::xml::{
     BucketEntry, BucketList, CommonPrefix, CompleteMultipartUploadResult, CopyObjectResult,
     DeleteErrorEntry, DeleteResult, DeletedEntry, InitiateMultipartUploadResult,
-    ListAllMyBucketsResult, ListBucketResult, LocationConstraint, ObjectEntry, XmlResponse,
+    ListAllMyBucketsResult, ListBucketResult, ListMultipartUploadsResult, LocationConstraint,
+    ObjectEntry, UploadEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -116,6 +117,7 @@ pub struct ListParams {
     pub max_keys: Option<usize>,
     #[serde(rename = "continuation-token")]
     pub continuation_token: Option<String>,
+    pub uploads: Option<String>,
 }
 
 pub async fn get_bucket(
@@ -148,6 +150,23 @@ pub async fn list_objects(
     Path(bucket): Path<String>,
     Query(params): Query<ListParams>,
 ) -> S3Result<Response> {
+    if params.uploads.is_some() {
+        let summaries = store.list_multipart_uploads(&bucket, params.prefix.as_deref())?;
+        let result = ListMultipartUploadsResult {
+            bucket,
+            prefix: params.prefix.unwrap_or_default(),
+            uploads: summaries
+                .into_iter()
+                .map(|u| UploadEntry {
+                    key: u.key,
+                    upload_id: u.upload_id,
+                    initiated: format_iso8601(u.initiated),
+                })
+                .collect(),
+        };
+        return Ok(XmlResponse(result).into_response());
+    }
+
     let max_keys = params.max_keys.unwrap_or(1000);
     let page = store.list_objects(
         &bucket,
