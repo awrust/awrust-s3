@@ -47,34 +47,8 @@ Context on "why" and "how". Each line limited to 80 characters.
 - No duplication; extract when patterns emerge
 - Expose what must be exposed, hide what must be hidden
 
-## Project structure
+## Reference
 
-```
-crates/
-  awrust-s3-domain/    # Store trait, MemoryStore, FsStore (no HTTP)
-  awrust-s3-server/    # Axum server, handlers, XML, error mapping
-tests/
-  integration/         # Behave BDD tests with boto3
-docker/
-  Dockerfile           # Multi-stage alpine build
-docs/
-  adr/                 # Architecture Decision Records
-```
-
-## S3 compatibility
-
-- Path-style (`/<bucket>/<key>`) and virtual-host (`bucket.host/<key>`) addressing
-- No auth validation (accept all requests)
-- ETags: MD5 for single-part, composite MD5 for multipart
-- XML responses via quick-xml with serde
-- All responses include `x-amz-request-id` header
-
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWRUST_S3_LISTEN_ADDR` | `0.0.0.0:4566` | Listen address |
-| `AWRUST_S3_STORE` | `memory` | `memory` or `fs` |
-| `AWRUST_S3_DATA_DIR` | `/data` | Data dir for fs backend |
-| `AWRUST_S3_BASE_DOMAIN` | `localhost` | Base domain for virtual-host addressing |
-| `AWRUST_LOG` | `info` | Log level |
+- [Usage Guide](docs/USAGE.md) — configuration, supported operations, examples
+- [Architecture](docs/ARCHITECTURE.md) — design decisions, internals, storage model
+- [ADRs](docs/adr) — architecture decision records
