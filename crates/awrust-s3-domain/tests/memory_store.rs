@@ -100,6 +100,7 @@ fn list_with_prefix() {
             "bucket",
             &ListObjectsParams {
                 prefix: Some("a/".to_string()),
+                delimiter: None,
                 continuation_token: None,
                 max_keys: 1000,
             },
@@ -168,6 +169,7 @@ fn pagination() {
             "bucket",
             &ListObjectsParams {
                 prefix: None,
+                delimiter: None,
                 continuation_token: None,
                 max_keys: 2,
             },
@@ -182,6 +184,7 @@ fn pagination() {
             "bucket",
             &ListObjectsParams {
                 prefix: None,
+                delimiter: None,
                 continuation_token: page1.next_continuation_token,
                 max_keys: 2,
             },
@@ -195,6 +198,7 @@ fn pagination() {
             "bucket",
             &ListObjectsParams {
                 prefix: None,
+                delimiter: None,
                 continuation_token: page2.next_continuation_token,
                 max_keys: 2,
             },
@@ -202,4 +206,80 @@ fn pagination() {
         .unwrap();
     assert_eq!(page3.objects.len(), 1);
     assert!(!page3.is_truncated);
+}
+
+#[test]
+fn delimiter_groups_nested_keys() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "a.txt", b"one");
+    put(&store, "bucket", "dir/b.txt", b"two");
+    put(&store, "bucket", "dir/c.txt", b"three");
+    put(&store, "bucket", "dir/sub/d.txt", b"four");
+
+    let page = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: None,
+                delimiter: Some("/".to_string()),
+                continuation_token: None,
+                max_keys: 1000,
+            },
+        )
+        .unwrap();
+
+    let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, vec!["a.txt"]);
+    assert_eq!(page.common_prefixes, vec!["dir/"]);
+    assert!(!page.is_truncated);
+}
+
+#[test]
+fn delimiter_with_prefix() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "photos/a.jpg", b"one");
+    put(&store, "bucket", "photos/vacation/b.jpg", b"two");
+    put(&store, "bucket", "photos/vacation/c.jpg", b"three");
+
+    let page = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: Some("photos/".to_string()),
+                delimiter: Some("/".to_string()),
+                continuation_token: None,
+                max_keys: 1000,
+            },
+        )
+        .unwrap();
+
+    let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, vec!["photos/a.jpg"]);
+    assert_eq!(page.common_prefixes, vec!["photos/vacation/"]);
+}
+
+#[test]
+fn delimiter_without_matches_returns_all_as_contents() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "a.txt", b"one");
+    put(&store, "bucket", "b.txt", b"two");
+
+    let page = store
+        .list_objects(
+            "bucket",
+            &ListObjectsParams {
+                prefix: None,
+                delimiter: Some("/".to_string()),
+                continuation_token: None,
+                max_keys: 1000,
+            },
+        )
+        .unwrap();
+
+    let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, vec!["a.txt", "b.txt"]);
+    assert!(page.common_prefixes.is_empty());
 }

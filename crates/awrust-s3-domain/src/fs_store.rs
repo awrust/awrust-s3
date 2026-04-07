@@ -1,6 +1,6 @@
 use crate::{
     GetObject, ListObjectsPage, ListObjectsParams, ObjectMeta, ObjectSummary, PutObject, Result,
-    Store, StoreError, composite_etag, decode_continuation_token, encode_continuation_token,
+    Store, StoreError, apply_delimiter, composite_etag, decode_continuation_token,
 };
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -273,20 +273,13 @@ impl Store for FsStore {
 
         summaries.sort_by(|a, b| a.key.cmp(&b.key));
 
-        let is_truncated = summaries.len() > params.max_keys;
-        summaries.truncate(params.max_keys);
-
-        let next_continuation_token = if is_truncated {
-            summaries.last().map(|s| encode_continuation_token(&s.key))
-        } else {
-            None
-        };
-
-        Ok(ListObjectsPage {
-            objects: summaries,
-            is_truncated,
-            next_continuation_token,
-        })
+        let prefix = params.prefix.as_deref().unwrap_or("");
+        Ok(apply_delimiter(
+            summaries,
+            prefix,
+            params.delimiter.as_deref(),
+            params.max_keys,
+        ))
     }
 
     fn initiate_multipart(
@@ -488,6 +481,7 @@ mod tests {
                 "b",
                 &ListObjectsParams {
                     prefix: Some("a/".to_string()),
+                    delimiter: None,
                     continuation_token: None,
                     max_keys: 1000,
                 },
@@ -576,6 +570,7 @@ mod tests {
                 "b",
                 &ListObjectsParams {
                     prefix: None,
+                    delimiter: None,
                     continuation_token: None,
                     max_keys: 2,
                 },
@@ -590,6 +585,7 @@ mod tests {
                 "b",
                 &ListObjectsParams {
                     prefix: None,
+                    delimiter: None,
                     continuation_token: page1.next_continuation_token,
                     max_keys: 2,
                 },
@@ -603,6 +599,7 @@ mod tests {
                 "b",
                 &ListObjectsParams {
                     prefix: None,
+                    delimiter: None,
                     continuation_token: page2.next_continuation_token,
                     max_keys: 2,
                 },

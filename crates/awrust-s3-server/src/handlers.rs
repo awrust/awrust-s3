@@ -10,9 +10,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
 use crate::xml::{
-    BucketEntry, BucketList, CompleteMultipartUploadResult, CopyObjectResult, DeleteErrorEntry,
-    DeleteResult, DeletedEntry, InitiateMultipartUploadResult, ListAllMyBucketsResult,
-    ListBucketResult, ObjectEntry, XmlResponse,
+    BucketEntry, BucketList, CommonPrefix, CompleteMultipartUploadResult, CopyObjectResult,
+    DeleteErrorEntry, DeleteResult, DeletedEntry, InitiateMultipartUploadResult,
+    ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -111,6 +111,7 @@ pub async fn list_buckets(State(store): State<Arc<dyn Store>>) -> Response {
 #[derive(Deserialize, Default)]
 pub struct ListParams {
     pub prefix: Option<String>,
+    pub delimiter: Option<String>,
     #[serde(rename = "max-keys")]
     pub max_keys: Option<usize>,
     #[serde(rename = "continuation-token")]
@@ -127,6 +128,7 @@ pub async fn list_objects(
         &bucket,
         &ListObjectsParams {
             prefix: params.prefix.clone(),
+            delimiter: params.delimiter.clone(),
             continuation_token: params.continuation_token.clone(),
             max_keys,
         },
@@ -135,7 +137,8 @@ pub async fn list_objects(
     let result = ListBucketResult {
         name: bucket,
         prefix: params.prefix.unwrap_or_default(),
-        key_count: page.objects.len(),
+        delimiter: params.delimiter,
+        key_count: page.objects.len() + page.common_prefixes.len(),
         max_keys,
         is_truncated: page.is_truncated,
         continuation_token: params.continuation_token,
@@ -149,6 +152,11 @@ pub async fn list_objects(
                 size: o.size,
                 etag: o.etag,
             })
+            .collect(),
+        common_prefixes: page
+            .common_prefixes
+            .into_iter()
+            .map(|p| CommonPrefix { prefix: p })
             .collect(),
     };
 

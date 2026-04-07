@@ -76,12 +76,14 @@ pub struct BucketSummary {
 
 pub struct ListObjectsParams {
     pub prefix: Option<String>,
+    pub delimiter: Option<String>,
     pub continuation_token: Option<String>,
     pub max_keys: usize,
 }
 
 pub struct ListObjectsPage {
     pub objects: Vec<ObjectSummary>,
+    pub common_prefixes: Vec<String>,
     pub is_truncated: bool,
     pub next_continuation_token: Option<String>,
 }
@@ -175,6 +177,72 @@ fn composite_etag(part_digests: &[Vec<u8>]) -> String {
         hasher.update(digest);
     }
     format!("\"{:x}-{}\"", hasher.finalize(), part_digests.len())
+}
+
+fn apply_delimiter(
+    sorted: Vec<ObjectSummary>,
+    prefix: &str,
+    delimiter: Option<&str>,
+    max_keys: usize,
+) -> ListObjectsPage {
+    let Some(delim) = delimiter else {
+        let is_truncated = sorted.len() > max_keys;
+        let mut objects = sorted;
+        objects.truncate(max_keys);
+        let next_continuation_token = if is_truncated {
+            objects.last().map(|s| encode_continuation_token(&s.key))
+        } else {
+            None
+        };
+        return ListObjectsPage {
+            objects,
+            common_prefixes: Vec::new(),
+            is_truncated,
+            next_continuation_token,
+        };
+    };
+
+    let mut objects = Vec::new();
+    let mut prefixes = std::collections::BTreeSet::new();
+    let mut last_key_seen = String::new();
+
+    for obj in &sorted {
+        last_key_seen.clone_from(&obj.key);
+        let after = &obj.key[prefix.len()..];
+        if let Some(pos) = after.find(delim) {
+            let cp = format!("{}{}", prefix, &after[..pos + delim.len()]);
+            let is_new = prefixes.insert(cp);
+            if is_new && objects.len() + prefixes.len() > max_keys {
+                break;
+            }
+        } else {
+            objects.push(obj.clone());
+            if objects.len() + prefixes.len() > max_keys {
+                break;
+            }
+        }
+    }
+
+    let total = objects.len() + prefixes.len();
+    let is_truncated = total > max_keys;
+    objects.truncate(max_keys.saturating_sub(prefixes.len()));
+    let common_prefixes: Vec<String> = prefixes
+        .into_iter()
+        .take(max_keys - objects.len())
+        .collect();
+
+    let next_continuation_token = if is_truncated {
+        Some(encode_continuation_token(&last_key_seen))
+    } else {
+        None
+    };
+
+    ListObjectsPage {
+        objects,
+        common_prefixes,
+        is_truncated,
+        next_continuation_token,
+    }
 }
 
 fn encode_continuation_token(key: &str) -> String {
@@ -350,20 +418,13 @@ impl Store for MemoryStore {
 
         summaries.sort_by(|a, b| a.key.cmp(&b.key));
 
-        let is_truncated = summaries.len() > params.max_keys;
-        summaries.truncate(params.max_keys);
-
-        let next_continuation_token = if is_truncated {
-            summaries.last().map(|s| encode_continuation_token(&s.key))
-        } else {
-            None
-        };
-
-        Ok(ListObjectsPage {
-            objects: summaries,
-            is_truncated,
-            next_continuation_token,
-        })
+        let prefix = params.prefix.as_deref().unwrap_or("");
+        Ok(apply_delimiter(
+            summaries,
+            prefix,
+            params.delimiter.as_deref(),
+            params.max_keys,
+        ))
     }
 
     fn initiate_multipart(
