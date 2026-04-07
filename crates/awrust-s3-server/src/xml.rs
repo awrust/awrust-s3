@@ -82,6 +82,15 @@ pub struct CompleteMultipartUploadResult {
     pub etag: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename = "CopyObjectResult")]
+pub struct CopyObjectResult {
+    #[serde(rename = "ETag")]
+    pub etag: String,
+    #[serde(rename = "LastModified")]
+    pub last_modified: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename = "CompleteMultipartUpload")]
 pub struct CompleteMultipartUploadRequest {

@@ -528,6 +528,42 @@ mod tests {
     }
 
     #[test]
+    fn copy_via_get_put() {
+        let (_tmp, store) = setup();
+        store.create_bucket("src").unwrap();
+        store.create_bucket("dst").unwrap();
+        store
+            .put_object(
+                "src",
+                "file.txt",
+                PutObject {
+                    bytes: b"payload".to_vec(),
+                    content_type: "text/plain".to_string(),
+                    metadata: HashMap::from([("tag".to_string(), "v1".to_string())]),
+                },
+            )
+            .unwrap();
+
+        let obj = store.get_object("src", "file.txt").unwrap();
+        store
+            .put_object(
+                "dst",
+                "copy.txt",
+                PutObject {
+                    bytes: obj.bytes,
+                    content_type: obj.meta.content_type,
+                    metadata: obj.meta.metadata,
+                },
+            )
+            .unwrap();
+
+        let copied = store.get_object("dst", "copy.txt").unwrap();
+        assert_eq!(copied.bytes, b"payload");
+        assert_eq!(copied.meta.content_type, "text/plain");
+        assert_eq!(copied.meta.metadata.get("tag").unwrap(), "v1");
+    }
+
+    #[test]
     fn pagination() {
         let (_tmp, store) = setup();
         store.create_bucket("b").unwrap();
