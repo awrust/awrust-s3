@@ -97,6 +97,46 @@ pub struct CompletedPart {
     pub etag: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename = "Delete")]
+pub struct DeleteRequest {
+    #[serde(rename = "Quiet", default)]
+    pub quiet: bool,
+    #[serde(rename = "Object")]
+    pub objects: Vec<DeleteRequestObject>,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteRequestObject {
+    #[serde(rename = "Key")]
+    pub key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "DeleteResult")]
+pub struct DeleteResult {
+    #[serde(rename = "Deleted", default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted: Vec<DeletedEntry>,
+    #[serde(rename = "Error", default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<DeleteErrorEntry>,
+}
+
+#[derive(Serialize)]
+pub struct DeletedEntry {
+    #[serde(rename = "Key")]
+    pub key: String,
+}
+
+#[derive(Serialize)]
+pub struct DeleteErrorEntry {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "Code")]
+    pub code: String,
+    #[serde(rename = "Message")]
+    pub message: String,
+}
+
 pub struct XmlResponse<T: Serialize>(pub T);
 
 impl<T: Serialize> IntoResponse for XmlResponse<T> {

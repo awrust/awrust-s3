@@ -10,8 +10,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::error::S3Error;
 use crate::xml::{
-    BucketEntry, BucketList, CompleteMultipartUploadResult, InitiateMultipartUploadResult,
-    ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
+    BucketEntry, BucketList, CompleteMultipartUploadResult, DeleteErrorEntry, DeleteResult,
+    DeletedEntry, InitiateMultipartUploadResult, ListAllMyBucketsResult, ListBucketResult,
+    ObjectEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -41,6 +42,54 @@ pub async fn delete_bucket(
 ) -> S3Result<StatusCode> {
     store.delete_bucket(&bucket)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, Default)]
+pub struct BucketQueryParams {
+    pub delete: Option<String>,
+}
+
+pub async fn post_bucket(
+    State(store): State<Arc<dyn Store>>,
+    Path(bucket): Path<String>,
+    Query(params): Query<BucketQueryParams>,
+    body: Bytes,
+) -> S3Result<Response> {
+    if params.delete.is_none() {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    }
+
+    if !store.bucket_exists(&bucket) {
+        return Err(awrust_s3_domain::StoreError::BucketNotFound(bucket).into());
+    }
+
+    let request: crate::xml::DeleteRequest =
+        quick_xml::de::from_str(&String::from_utf8_lossy(&body))
+            .map_err(|_| awrust_s3_domain::StoreError::BucketNotFound(bucket.clone()))?;
+
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+
+    for obj in &request.objects {
+        match store.delete_object(&bucket, &obj.key) {
+            Ok(()) | Err(awrust_s3_domain::StoreError::ObjectNotFound { .. }) => {
+                if !request.quiet {
+                    deleted.push(DeletedEntry {
+                        key: obj.key.clone(),
+                    });
+                }
+            }
+            Err(e) => {
+                errors.push(DeleteErrorEntry {
+                    key: obj.key.clone(),
+                    code: "InternalError".to_string(),
+                    message: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(XmlResponse(DeleteResult { deleted, errors }).into_response())
 }
 
 pub async fn list_buckets(State(store): State<Arc<dyn Store>>) -> Response {
