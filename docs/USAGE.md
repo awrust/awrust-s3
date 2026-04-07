@@ -6,7 +6,7 @@ All configuration is via environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AWRUST_S3_LISTEN_ADDR` | `0.0.0.0:4566` | Listen address |
+| `AWRUST_S3_LISTEN_ADDR` | `[::]:4566` | Listen address (dual-stack IPv4+IPv6) |
 | `AWRUST_S3_STORE` | `memory` | Storage backend: `memory` or `fs` |
 | `AWRUST_S3_DATA_DIR` | `/data` | Data directory for `fs` backend |
 | `AWRUST_S3_BASE_DOMAIN` | `localhost` | Base domain for virtual-host addressing |
