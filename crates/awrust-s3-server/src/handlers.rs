@@ -1,6 +1,6 @@
 use awrust_s3_domain::{ListObjectsParams, ObjectMeta, PutObject, Store};
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use crate::error::S3Error;
 use crate::xml::{
     BucketEntry, BucketList, CommonPrefix, CompleteMultipartUploadResult, CopyObjectResult,
     DeleteErrorEntry, DeleteResult, DeletedEntry, InitiateMultipartUploadResult,
-    ListAllMyBucketsResult, ListBucketResult, ObjectEntry, XmlResponse,
+    ListAllMyBucketsResult, ListBucketResult, LocationConstraint, ObjectEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -116,6 +116,31 @@ pub struct ListParams {
     pub max_keys: Option<usize>,
     #[serde(rename = "continuation-token")]
     pub continuation_token: Option<String>,
+}
+
+pub async fn get_bucket(
+    state: State<Arc<dyn Store>>,
+    path: Path<String>,
+    RawQuery(query): RawQuery,
+    params: Query<ListParams>,
+) -> S3Result<Response> {
+    if query.as_deref() == Some("location") {
+        return get_bucket_location(state, path).await;
+    }
+    list_objects(state, path, params).await
+}
+
+async fn get_bucket_location(
+    State(store): State<Arc<dyn Store>>,
+    Path(bucket): Path<String>,
+) -> S3Result<Response> {
+    if !store.bucket_exists(&bucket) {
+        return Err(awrust_s3_domain::StoreError::BucketNotFound(bucket).into());
+    }
+    Ok(XmlResponse(LocationConstraint {
+        region: "us-east-1".to_string(),
+    })
+    .into_response())
 }
 
 pub async fn list_objects(

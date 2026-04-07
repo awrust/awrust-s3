@@ -61,3 +61,25 @@ def step_assert_bucket_has_creation_date(context, name):
             assert "CreationDate" in b, f"bucket {name} missing CreationDate"
             return
     assert False, f"bucket {name} not found in list"
+
+
+@when('I get the location of bucket "{name}"')
+def step_get_bucket_location(context, name):
+    resp = context.s3.get_bucket_location(Bucket=name)
+    context.location = resp.get("LocationConstraint")
+
+
+@when('I try to get the location of bucket "{name}"')
+def step_try_get_bucket_location(context, name):
+    try:
+        context.s3.get_bucket_location(Bucket=name)
+        context.last_error = None
+    except ClientError as e:
+        context.last_error = e
+
+
+@then('the location should be "{region}"')
+def step_assert_location(context, region):
+    assert context.location == region, (
+        f"expected {region}, got {context.location}"
+    )
