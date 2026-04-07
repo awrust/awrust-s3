@@ -38,6 +38,7 @@ def _start_cargo(context, port, store):
     env = os.environ.copy()
     env["AWRUST_S3_LISTEN_ADDR"] = f"127.0.0.1:{port}"
     env["AWRUST_S3_STORE"] = store
+    env["AWRUST_S3_BASE_DOMAIN"] = "localhost"
     env["AWRUST_LOG"] = "warn"
 
     if store == "fs":
@@ -57,6 +58,7 @@ def _start_docker(context, port, store, image):
     docker_env = {
         "AWRUST_S3_LISTEN_ADDR": f"0.0.0.0:4566",
         "AWRUST_S3_STORE": store,
+        "AWRUST_S3_BASE_DOMAIN": "localhost",
         "AWRUST_LOG": "warn",
     }
 
@@ -77,6 +79,7 @@ def _start_docker(context, port, store, image):
 
 def before_all(context):
     port = _free_port()
+    context.port = port
     context.base_url = f"http://127.0.0.1:{port}"
 
     store = os.environ.get("STORE", "memory")
