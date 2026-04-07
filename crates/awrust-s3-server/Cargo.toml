@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 awrust-s3-domain = { path = "../awrust-s3-domain" }
 axum = "0.7"
+httpdate = "1"
 bytes = "1"
 md-5 = "0.10"
 quick-xml = { version = "0.37", features = ["serialize", "serde"] }

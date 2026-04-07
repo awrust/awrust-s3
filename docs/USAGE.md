@@ -132,7 +132,7 @@ All responses include permissive CORS headers. `OPTIONS` preflight requests are 
 | `ETag` | MD5 for single-part, composite `MD5-N` for multipart |
 | `Content-Type` | Original MIME type |
 | `Content-Length` | Body size in bytes |
-| `Last-Modified` | ISO 8601 timestamp |
+| `Last-Modified` | RFC 7231 (IMF-fixdate) timestamp |
 | `x-amz-meta-*` | Custom metadata |
 | `x-amz-request-id` | UUID per request |
 | `Accept-Ranges` | `bytes` (on GET/HEAD object) |

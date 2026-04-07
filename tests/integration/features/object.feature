@@ -37,3 +37,7 @@ Feature: Object operations
     When I upload "obj-bucket/meta.txt" with body "data" and metadata "color=blue,env=test"
     Then object "obj-bucket/meta.txt" should have metadata "color" with value "blue"
     And object "obj-bucket/meta.txt" should have metadata "env" with value "test"
+
+  Scenario: Last-Modified header uses RFC 7231 format
+    When I put object "obj-bucket/rfc-test.txt" with content "ts"
+    Then the last modified header for "obj-bucket/rfc-test.txt" should be RFC 7231 format

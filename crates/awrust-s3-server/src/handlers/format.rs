@@ -61,7 +61,7 @@ pub(crate) fn meta_to_headers(meta: &ObjectMeta) -> HeaderMap {
     );
     headers.insert(
         "last-modified",
-        format_iso8601(meta.last_modified)
+        format_httpdate(meta.last_modified)
             .parse()
             .expect("valid header"),
     );
@@ -77,14 +77,8 @@ pub(crate) fn meta_to_headers(meta: &ObjectMeta) -> HeaderMap {
 }
 
 pub(crate) fn format_iso8601(epoch_secs: u64) -> String {
-    let dt = UNIX_EPOCH + Duration::from_secs(epoch_secs);
-    let secs = dt
-        .duration_since(UNIX_EPOCH)
-        .expect("after epoch")
-        .as_secs();
-
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
+    let days = epoch_secs / 86400;
+    let time_secs = epoch_secs % 86400;
     let hours = time_secs / 3600;
     let minutes = (time_secs % 3600) / 60;
     let seconds = time_secs % 60;
@@ -134,4 +128,53 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 
 fn is_leap(year: u64) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
+}
+
+pub(crate) fn format_httpdate(epoch_secs: u64) -> String {
+    httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_secs(epoch_secs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn httpdate_formats_rfc7231() {
+        assert_eq!(
+            format_httpdate(1_775_602_214),
+            "Tue, 07 Apr 2026 22:50:14 GMT"
+        );
+    }
+
+    #[test]
+    fn httpdate_epoch_zero() {
+        assert_eq!(format_httpdate(0), "Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+
+    #[test]
+    fn httpdate_leap_day() {
+        assert_eq!(
+            format_httpdate(1_709_208_000),
+            "Thu, 29 Feb 2024 12:00:00 GMT"
+        );
+    }
+
+    #[test]
+    fn iso8601_known_timestamp() {
+        assert_eq!(format_iso8601(1_775_602_214), "2026-04-07T22:50:14.000Z");
+    }
+
+    #[test]
+    fn meta_headers_use_rfc7231_for_last_modified() {
+        let meta = ObjectMeta {
+            etag: "\"abc\"".to_string(),
+            size: 5,
+            content_type: "text/plain".to_string(),
+            last_modified: 1_775_602_214,
+            metadata: Default::default(),
+        };
+        let headers = meta_to_headers(&meta);
+        let last_mod = headers.get("last-modified").unwrap().to_str().unwrap();
+        assert_eq!(last_mod, "Tue, 07 Apr 2026 22:50:14 GMT");
+    }
 }
