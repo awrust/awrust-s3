@@ -160,6 +160,13 @@ pub struct DeleteErrorEntry {
     pub message: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename = "LocationConstraint")]
+pub struct LocationConstraint {
+    #[serde(rename = "$text")]
+    pub region: String,
+}
+
 pub struct XmlResponse<T: Serialize>(pub T);
 
 impl<T: Serialize> IntoResponse for XmlResponse<T> {
@@ -171,5 +178,20 @@ impl<T: Serialize> IntoResponse for XmlResponse<T> {
             }
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quick_xml::se::to_string;
+
+    #[test]
+    fn location_constraint_serializes_region() {
+        let lc = LocationConstraint {
+            region: "us-east-1".to_string(),
+        };
+        let xml = to_string(&lc).unwrap();
+        assert_eq!(xml, "<LocationConstraint>us-east-1</LocationConstraint>");
     }
 }

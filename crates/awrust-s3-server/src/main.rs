@@ -47,7 +47,7 @@ async fn main() {
             put(handlers::create_bucket)
                 .head(handlers::head_bucket)
                 .delete(handlers::delete_bucket)
-                .get(handlers::list_objects)
+                .get(handlers::get_bucket)
                 .post(handlers::post_bucket),
         )
         .route(

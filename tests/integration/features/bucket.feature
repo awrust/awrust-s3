@@ -31,3 +31,12 @@ Feature: Bucket operations
     Given bucket "dated-bucket" exists
     When I list all buckets
     Then bucket "dated-bucket" in the list should have a creation date
+
+  Scenario: Get bucket location
+    Given bucket "loc-bucket" exists
+    When I get the location of bucket "loc-bucket"
+    Then the location should be "us-east-1"
+
+  Scenario: Get location of non-existent bucket fails
+    When I try to get the location of bucket "ghost-bucket"
+    Then the operation should fail
