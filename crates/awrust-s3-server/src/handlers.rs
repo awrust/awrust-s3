@@ -12,8 +12,8 @@ use crate::error::S3Error;
 use crate::xml::{
     BucketEntry, BucketList, CommonPrefix, CompleteMultipartUploadResult, CopyObjectResult,
     DeleteErrorEntry, DeleteResult, DeletedEntry, InitiateMultipartUploadResult,
-    ListAllMyBucketsResult, ListBucketResult, ListMultipartUploadsResult, LocationConstraint,
-    ObjectEntry, Tagging, UploadEntry, XmlResponse,
+    ListAllMyBucketsResult, ListBucketResult, ListMultipartUploadsResult, ListVersionsResult,
+    LocationConstraint, ObjectEntry, Tagging, UploadEntry, VersionEntry, XmlResponse,
 };
 
 type S3Result<T> = Result<T, S3Error>;
@@ -118,6 +118,7 @@ pub struct ListParams {
     #[serde(rename = "continuation-token")]
     pub continuation_token: Option<String>,
     pub uploads: Option<String>,
+    pub versions: Option<String>,
 }
 
 pub async fn get_bucket(
@@ -167,6 +168,10 @@ pub async fn list_objects(
         return Ok(XmlResponse(result).into_response());
     }
 
+    if params.versions.is_some() {
+        return list_object_versions(store, &bucket, &params).await;
+    }
+
     let max_keys = params.max_keys.unwrap_or(1000);
     let page = store.list_objects(
         &bucket,
@@ -201,6 +206,47 @@ pub async fn list_objects(
             .common_prefixes
             .into_iter()
             .map(|p| CommonPrefix { prefix: p })
+            .collect(),
+    };
+
+    Ok(XmlResponse(result).into_response())
+}
+
+async fn list_object_versions(
+    store: Arc<dyn Store>,
+    bucket: &str,
+    params: &ListParams,
+) -> S3Result<Response> {
+    let max_keys = params.max_keys.unwrap_or(1000);
+    let page = store.list_objects(
+        bucket,
+        &ListObjectsParams {
+            prefix: params.prefix.clone(),
+            delimiter: None,
+            continuation_token: None,
+            max_keys,
+        },
+    )?;
+
+    let result = ListVersionsResult {
+        name: bucket.to_owned(),
+        prefix: params.prefix.clone().unwrap_or_default(),
+        key_marker: String::new(),
+        version_id_marker: String::new(),
+        max_keys,
+        is_truncated: page.is_truncated,
+        versions: page
+            .objects
+            .into_iter()
+            .map(|o| VersionEntry {
+                key: o.key,
+                version_id: "null".to_owned(),
+                is_latest: true,
+                last_modified: format_iso8601(o.last_modified),
+                etag: o.etag,
+                size: o.size,
+                storage_class: "STANDARD".to_owned(),
+            })
             .collect(),
     };
 
