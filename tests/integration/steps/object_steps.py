@@ -1,3 +1,5 @@
+import re
+
 from behave import given, when, then
 from botocore.exceptions import ClientError
 
@@ -121,4 +123,21 @@ def step_assert_metadata(context, path, meta_key, meta_value):
     actual = metadata.get(meta_key)
     assert actual == meta_value, (
         f"expected metadata {meta_key}={meta_value}, got {actual} (all: {metadata})"
+    )
+
+
+RFC_7231_PATTERN = re.compile(
+    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} "
+    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+    r"\d{4} \d{2}:\d{2}:\d{2} GMT$"
+)
+
+
+@then('the last modified header for "{path}" should be RFC 7231 format')
+def step_assert_last_modified_rfc7231(context, path):
+    bucket, key = _split(path)
+    resp = context.s3.head_object(Bucket=bucket, Key=key)
+    last_mod = resp["ResponseMetadata"]["HTTPHeaders"]["last-modified"]
+    assert RFC_7231_PATTERN.match(last_mod), (
+        f"expected RFC 7231 format, got {last_mod!r}"
     )

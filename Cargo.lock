@@ -53,6 +53,7 @@ dependencies = [
  "awrust-s3-domain",
  "axum",
  "bytes",
+ "httpdate",
  "md-5",
  "quick-xml",
  "serde",
