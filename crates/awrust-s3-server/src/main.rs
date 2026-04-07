@@ -13,6 +13,7 @@ use axum::{Json, Router, ServiceExt, extract::Request};
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -80,7 +81,8 @@ async fn main() {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        );
+        )
+        .layer(CorsLayer::very_permissive());
 
     let app = vhost::VhostService::new(app, base_domain);
 
