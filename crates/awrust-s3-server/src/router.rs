@@ -66,7 +66,7 @@ pub(crate) fn build(store: Arc<dyn Store>) -> (VhostService<Router>, SocketAddr)
     let service = VhostService::new(app, base_domain);
 
     let addr: SocketAddr = std::env::var("AWRUST_S3_LISTEN_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:4566".to_string())
+        .unwrap_or_else(|_| "[::]:4566".to_string())
         .parse()
         .expect("valid listen addr");
 

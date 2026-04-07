@@ -56,7 +56,7 @@ def _start_cargo(context, port, store):
 
 def _start_docker(context, port, store, image):
     docker_env = {
-        "AWRUST_S3_LISTEN_ADDR": f"0.0.0.0:4566",
+        "AWRUST_S3_LISTEN_ADDR": f"[::]:4566",
         "AWRUST_S3_STORE": store,
         "AWRUST_S3_BASE_DOMAIN": "localhost",
         "AWRUST_LOG": "warn",

@@ -16,7 +16,7 @@ COPY --from=builder /build/target/release/awrust-s3-server /usr/local/bin/awrust
 
 USER awrust
 
-ENV AWRUST_S3_LISTEN_ADDR=0.0.0.0:4566
+ENV AWRUST_S3_LISTEN_ADDR=[::]:4566
 ENV AWRUST_S3_STORE=memory
 ENV AWRUST_S3_DATA_DIR=/data
 ENV AWRUST_LOG=info
