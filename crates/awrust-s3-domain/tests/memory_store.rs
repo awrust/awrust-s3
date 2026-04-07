@@ -1,4 +1,4 @@
-use awrust_s3_domain::{ListObjectsParams, MemoryStore, PutObject, Store};
+use awrust_s3_domain::{ListObjectsParams, MemoryStore, PutObject, Store, StoreError};
 use std::collections::HashMap;
 
 fn put(store: &MemoryStore, bucket: &str, key: &str, bytes: &[u8]) {
@@ -282,4 +282,100 @@ fn delimiter_without_matches_returns_all_as_contents() {
     let keys: Vec<&str> = page.objects.iter().map(|o| o.key.as_str()).collect();
     assert_eq!(keys, vec!["a.txt", "b.txt"]);
     assert!(page.common_prefixes.is_empty());
+}
+
+#[test]
+fn put_and_get_tagging() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "key", b"data");
+
+    let tags = HashMap::from([
+        ("env".to_string(), "prod".to_string()),
+        ("team".to_string(), "data".to_string()),
+    ]);
+    store
+        .put_object_tagging("bucket", "key", tags.clone())
+        .unwrap();
+
+    let got = store.get_object_tagging("bucket", "key").unwrap();
+    assert_eq!(got, tags);
+}
+
+#[test]
+fn get_tagging_empty_by_default() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "key", b"data");
+
+    let tags = store.get_object_tagging("bucket", "key").unwrap();
+    assert!(tags.is_empty());
+}
+
+#[test]
+fn delete_tagging() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "key", b"data");
+
+    store
+        .put_object_tagging(
+            "bucket",
+            "key",
+            HashMap::from([("env".to_string(), "prod".to_string())]),
+        )
+        .unwrap();
+    store.delete_object_tagging("bucket", "key").unwrap();
+
+    let tags = store.get_object_tagging("bucket", "key").unwrap();
+    assert!(tags.is_empty());
+}
+
+#[test]
+fn put_object_clears_tags() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+    put(&store, "bucket", "key", b"v1");
+
+    store
+        .put_object_tagging(
+            "bucket",
+            "key",
+            HashMap::from([("env".to_string(), "prod".to_string())]),
+        )
+        .unwrap();
+
+    put(&store, "bucket", "key", b"v2");
+
+    let tags = store.get_object_tagging("bucket", "key").unwrap();
+    assert!(tags.is_empty());
+}
+
+#[test]
+fn tagging_on_missing_object() {
+    let store = MemoryStore::new();
+    store.create_bucket("bucket").unwrap();
+
+    assert!(matches!(
+        store.get_object_tagging("bucket", "nope"),
+        Err(StoreError::ObjectNotFound { .. })
+    ));
+    assert!(matches!(
+        store.put_object_tagging("bucket", "nope", HashMap::new()),
+        Err(StoreError::ObjectNotFound { .. })
+    ));
+    assert!(matches!(
+        store.delete_object_tagging("bucket", "nope"),
+        Err(StoreError::ObjectNotFound { .. })
+    ));
+}
+
+#[test]
+fn tagging_on_missing_bucket() {
+    let store = MemoryStore::new();
+
+    assert!(matches!(
+        store.get_object_tagging("nope", "key"),
+        Err(StoreError::BucketNotFound(_))
+    ));
 }

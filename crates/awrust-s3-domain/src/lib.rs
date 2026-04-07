@@ -135,6 +135,15 @@ pub trait Store: Send + Sync {
         bucket: &str,
         prefix: Option<&str>,
     ) -> Result<Vec<UploadSummary>>;
+
+    fn put_object_tagging(
+        &self,
+        bucket: &str,
+        key: &str,
+        tags: HashMap<String, String>,
+    ) -> Result<()>;
+    fn get_object_tagging(&self, bucket: &str, key: &str) -> Result<HashMap<String, String>>;
+    fn delete_object_tagging(&self, bucket: &str, key: &str) -> Result<()>;
 }
 
 #[derive(Debug, Default)]
@@ -165,6 +174,7 @@ struct ObjectRecord {
     content_type: String,
     metadata: HashMap<String, String>,
     last_modified: u64,
+    tags: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -329,6 +339,7 @@ impl Store for MemoryStore {
                 content_type: input.content_type,
                 metadata: input.metadata,
                 last_modified: now_secs(),
+                tags: HashMap::new(),
             },
         );
         Ok(())
@@ -528,6 +539,7 @@ impl Store for MemoryStore {
                 content_type: upload.content_type,
                 metadata: upload.metadata,
                 last_modified: now_secs(),
+                tags: HashMap::new(),
             },
         );
 
@@ -567,6 +579,60 @@ impl Store for MemoryStore {
             .collect();
         summaries.sort_by(|a, b| a.key.cmp(&b.key));
         Ok(summaries)
+    }
+
+    fn put_object_tagging(
+        &self,
+        bucket: &str,
+        key: &str,
+        tags: HashMap<String, String>,
+    ) -> Result<()> {
+        let mut buckets = self.buckets.write().expect("lock poisoned");
+        let bucket_state = buckets
+            .get_mut(bucket)
+            .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
+        let record =
+            bucket_state
+                .objects
+                .get_mut(key)
+                .ok_or_else(|| StoreError::ObjectNotFound {
+                    bucket: bucket.to_string(),
+                    key: key.to_string(),
+                })?;
+        record.tags = tags;
+        Ok(())
+    }
+
+    fn get_object_tagging(&self, bucket: &str, key: &str) -> Result<HashMap<String, String>> {
+        let buckets = self.buckets.read().expect("lock poisoned");
+        let bucket_state = buckets
+            .get(bucket)
+            .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
+        let record = bucket_state
+            .objects
+            .get(key)
+            .ok_or_else(|| StoreError::ObjectNotFound {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+            })?;
+        Ok(record.tags.clone())
+    }
+
+    fn delete_object_tagging(&self, bucket: &str, key: &str) -> Result<()> {
+        let mut buckets = self.buckets.write().expect("lock poisoned");
+        let bucket_state = buckets
+            .get_mut(bucket)
+            .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
+        let record =
+            bucket_state
+                .objects
+                .get_mut(key)
+                .ok_or_else(|| StoreError::ObjectNotFound {
+                    bucket: bucket.to_string(),
+                    key: key.to_string(),
+                })?;
+        record.tags.clear();
+        Ok(())
     }
 }
 

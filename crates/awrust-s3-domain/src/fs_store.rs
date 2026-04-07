@@ -21,6 +21,8 @@ struct MetaFile {
     metadata: HashMap<String, String>,
     last_modified: u64,
     size: u64,
+    #[serde(default)]
+    tags: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -101,6 +103,11 @@ impl FsStore {
             key: key.to_string(),
         })
     }
+
+    fn write_meta(&self, bucket: &str, key: &str, meta: &MetaFile) {
+        let meta_json = serde_json::to_vec(meta).expect("serialize meta");
+        fs::write(self.meta_path(bucket, key), &meta_json).expect("write meta");
+    }
 }
 
 fn now_secs() -> u64 {
@@ -174,10 +181,10 @@ impl Store for FsStore {
             metadata: input.metadata,
             last_modified: now_secs(),
             size,
+            tags: HashMap::new(),
         };
 
-        let meta_json = serde_json::to_vec(&meta).expect("serialize meta");
-        fs::write(self.meta_path(bucket, key), &meta_json).expect("write meta");
+        self.write_meta(bucket, key, &meta);
 
         Ok(())
     }
@@ -370,9 +377,9 @@ impl Store for FsStore {
             metadata: upload_meta.metadata,
             last_modified: now_secs(),
             size,
+            tags: HashMap::new(),
         };
-        let meta_json = serde_json::to_vec(&meta).expect("serialize meta");
-        fs::write(self.meta_path(bucket, &upload_meta.key), &meta_json).expect("write meta");
+        self.write_meta(bucket, &upload_meta.key, &meta);
 
         fs::remove_dir_all(&upload_dir).ok();
 
@@ -421,6 +428,33 @@ impl Store for FsStore {
             .collect();
         summaries.sort_by(|a, b| a.key.cmp(&b.key));
         Ok(summaries)
+    }
+
+    fn put_object_tagging(
+        &self,
+        bucket: &str,
+        key: &str,
+        tags: HashMap<String, String>,
+    ) -> Result<()> {
+        self.require_bucket(bucket)?;
+        let mut meta = self.read_meta(bucket, key)?;
+        meta.tags = tags;
+        self.write_meta(bucket, key, &meta);
+        Ok(())
+    }
+
+    fn get_object_tagging(&self, bucket: &str, key: &str) -> Result<HashMap<String, String>> {
+        self.require_bucket(bucket)?;
+        let meta = self.read_meta(bucket, key)?;
+        Ok(meta.tags)
+    }
+
+    fn delete_object_tagging(&self, bucket: &str, key: &str) -> Result<()> {
+        self.require_bucket(bucket)?;
+        let mut meta = self.read_meta(bucket, key)?;
+        meta.tags.clear();
+        self.write_meta(bucket, key, &meta);
+        Ok(())
     }
 }
 
@@ -593,6 +627,92 @@ mod tests {
         assert_eq!(copied.bytes, b"payload");
         assert_eq!(copied.meta.content_type, "text/plain");
         assert_eq!(copied.meta.metadata.get("tag").unwrap(), "v1");
+    }
+
+    #[test]
+    fn put_and_get_tagging() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+        put(&store, "b", "k", b"data");
+
+        let tags = HashMap::from([
+            ("env".to_string(), "prod".to_string()),
+            ("team".to_string(), "data".to_string()),
+        ]);
+        store.put_object_tagging("b", "k", tags.clone()).unwrap();
+
+        let got = store.get_object_tagging("b", "k").unwrap();
+        assert_eq!(got, tags);
+    }
+
+    #[test]
+    fn get_tagging_empty_by_default() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+        put(&store, "b", "k", b"data");
+
+        let tags = store.get_object_tagging("b", "k").unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn delete_tagging() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+        put(&store, "b", "k", b"data");
+
+        store
+            .put_object_tagging(
+                "b",
+                "k",
+                HashMap::from([("env".to_string(), "prod".to_string())]),
+            )
+            .unwrap();
+        store.delete_object_tagging("b", "k").unwrap();
+
+        let tags = store.get_object_tagging("b", "k").unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn put_object_clears_tags() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+        put(&store, "b", "k", b"v1");
+
+        store
+            .put_object_tagging(
+                "b",
+                "k",
+                HashMap::from([("env".to_string(), "prod".to_string())]),
+            )
+            .unwrap();
+
+        put(&store, "b", "k", b"v2");
+
+        let tags = store.get_object_tagging("b", "k").unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn tagging_on_missing_object() {
+        let (_tmp, store) = setup();
+        store.create_bucket("b").unwrap();
+
+        assert!(matches!(
+            store.get_object_tagging("b", "nope"),
+            Err(StoreError::ObjectNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn tagging_on_missing_bucket() {
+        let (_tmp, store) = setup();
+
+        assert!(matches!(
+            store.get_object_tagging("nope", "k"),
+            Err(StoreError::BucketNotFound(_))
+        ));
     }
 
     #[test]
