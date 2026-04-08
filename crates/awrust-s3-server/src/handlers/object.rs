@@ -1,4 +1,4 @@
-use awrust_s3_domain::{PutObject, Store};
+use awrust_s3_domain::{PutObject, Store, decode_aws_chunked};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -39,7 +39,18 @@ pub async fn put_object_or_part(
     }
 
     if let (Some(upload_id), Some(part_number)) = (&params.upload_id, params.part_number) {
-        let etag = store.upload_part(&bucket, &key, upload_id, part_number, body.to_vec())?;
+        let is_aws_chunked = headers
+            .get("content-encoding")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("aws-chunked"));
+
+        let part_bytes = if is_aws_chunked {
+            decode_aws_chunked(&body)?
+        } else {
+            body.to_vec()
+        };
+
+        let etag = store.upload_part(&bucket, &key, upload_id, part_number, part_bytes)?;
         return Ok((StatusCode::OK, [("etag", etag)]).into_response());
     }
 
@@ -51,11 +62,22 @@ pub async fn put_object_or_part(
 
     let metadata = extract_amz_meta(&headers);
 
+    let is_aws_chunked = headers
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("aws-chunked"));
+
+    let bytes = if is_aws_chunked {
+        decode_aws_chunked(&body)?
+    } else {
+        body.to_vec()
+    };
+
     store.put_object(
         &bucket,
         &key,
         PutObject {
-            bytes: body.to_vec(),
+            bytes,
             content_type,
             metadata,
         },
