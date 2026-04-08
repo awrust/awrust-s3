@@ -9,6 +9,7 @@ pub enum StoreError {
     ObjectNotFound { bucket: String, key: String },
     UploadNotFound(String),
     InvalidPart { upload_id: String, part_number: u32 },
+    InvalidChunkedEncoding,
 }
 
 impl fmt::Display for StoreError {
@@ -24,6 +25,7 @@ impl fmt::Display for StoreError {
                 upload_id,
                 part_number,
             } => write!(f, "invalid part {part_number} for upload {upload_id}"),
+            StoreError::InvalidChunkedEncoding => write!(f, "invalid aws-chunked encoding"),
         }
     }
 }

@@ -41,6 +41,11 @@ impl IntoResponse for S3Error {
                 "InvalidPart",
                 format!("Invalid part {part_number} for upload {upload_id}"),
             ),
+            StoreError::InvalidChunkedEncoding => (
+                StatusCode::BAD_REQUEST,
+                "InvalidArgument",
+                "Could not decode aws-chunked request body".to_string(),
+            ),
         };
 
         let body = format!(
