@@ -173,13 +173,7 @@ impl Store for MemoryStore {
             .get_mut(bucket)
             .ok_or_else(|| StoreError::BucketNotFound(bucket.to_string()))?;
 
-        if bucket_state.objects.remove(key).is_none() {
-            return Err(StoreError::ObjectNotFound {
-                bucket: bucket.to_string(),
-                key: key.to_string(),
-            });
-        }
-
+        bucket_state.objects.remove(key);
         Ok(())
     }
 
@@ -412,6 +406,13 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_nonexistent_object_succeeds() {
+        let store = MemoryStore::new();
+        store.create_bucket("b").unwrap();
+        assert!(store.delete_object("b", "ghost.txt").is_ok());
+    }
 
     #[test]
     fn list_multipart_uploads_empty() {
