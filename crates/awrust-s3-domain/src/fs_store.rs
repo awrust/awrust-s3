@@ -225,15 +225,7 @@ impl Store for FsStore {
     fn delete_object(&self, bucket: &str, key: &str) -> Result<()> {
         self.require_bucket(bucket)?;
 
-        let obj_path = self.object_path(bucket, key);
-        if !obj_path.exists() {
-            return Err(StoreError::ObjectNotFound {
-                bucket: bucket.to_string(),
-                key: key.to_string(),
-            });
-        }
-
-        fs::remove_file(obj_path).ok();
+        fs::remove_file(self.object_path(bucket, key)).ok();
         fs::remove_file(self.meta_path(bucket, key)).ok();
         Ok(())
     }

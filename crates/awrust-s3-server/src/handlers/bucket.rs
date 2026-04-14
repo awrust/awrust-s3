@@ -63,7 +63,7 @@ pub async fn post_bucket(
 
     for obj in &request.objects {
         match store.delete_object(&bucket, &obj.key) {
-            Ok(()) | Err(awrust_s3_domain::StoreError::ObjectNotFound { .. }) => {
+            Ok(()) => {
                 if !request.quiet {
                     deleted.push(DeletedEntry {
                         key: obj.key.clone(),

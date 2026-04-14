@@ -19,6 +19,10 @@ Feature: Object operations
     When I list objects in "obj-bucket" with prefix "a/"
     Then the listed keys should be "a/1.txt,a/2.txt"
 
+  Scenario: Delete a non-existent object succeeds
+    When I delete object "obj-bucket/ghost.txt"
+    Then object "obj-bucket/ghost.txt" should not exist
+
   Scenario: Get non-existent object fails
     When I try to get object "obj-bucket/nope.txt"
     Then the operation should fail
